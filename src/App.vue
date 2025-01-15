@@ -4,12 +4,17 @@
     <template v-if="!selectedPlaylist">
       <!-- 顶部搜索栏 -->
       <div class="top-bar">
-        <div class="search-box">
-          <input type="text" placeholder="搜索" v-model="searchText">
+        <div class="top-left">
+          <div class="search-box">
+            <input 
+              type="text" 
+              placeholder="搜索播放列表..." 
+              v-model="searchText"
+            >
+            <span class="search-icon">🔍</span>
+          </div>
         </div>
-        <div class="top-icons">
-          <span class="icon">⭐</span>
-          <span class="icon">🔄</span>
+        <div class="top-right">
           <span class="icon settings-icon" @click="toggleSettings">⚙️</span>
         </div>
       </div>
@@ -17,9 +22,9 @@
       <!-- 播放列表网格 -->
       <div class="playlists-container">
         <div class="playlist-cards">
-          <div v-for="playlist in playlists" 
-               :key="playlist.id" 
-               class="playlist-card">
+          <div v-for="playlist in filteredPlaylists" 
+                :key="playlist.id" 
+                class="playlist-card">
             <div class="playlist-content" @click="selectPlaylist(playlist)">
               <div class="playlist-info">
                 <div class="playlist-name">{{ playlist.name }}</div>
@@ -49,15 +54,31 @@
       <div class="player-page">
         <!-- 顶部栏 -->
         <div class="player-header">
-          <button class="back-button" @click="handleBack">
-            <span class="back-icon">←</span>
-            返回
-          </button>
-          <button class="toggle-list-button" @click="toggleChannelList">
-            <span class="toggle-icon">{{ showChannelList ? '◀' : '▶' }}</span>
-            {{ showChannelList ? '隐藏列表' : '显示列表' }}
-          </button>
-          <h2 class="playlist-title">{{ selectedPlaylist.name }}</h2>
+          <div class="header-left">
+            <button class="back-button" @click="handleBack">
+              <span class="back-icon">←</span>
+              返回
+            </button>
+            <button class="toggle-list-button" @click="toggleChannelList">
+              <span class="toggle-icon">{{ showChannelList ? '◀' : '▶' }}</span>
+              {{ showChannelList ? '隐藏列表' : '显示列表' }}
+            </button>
+            <h2 class="playlist-title">{{ selectedPlaylist.name }}</h2>
+          </div>
+          <div class="header-right">
+            <div class="channel-search">
+              <input 
+                type="text" 
+                v-model="channelSearchText" 
+                placeholder="搜索频道..."
+                @input="filterChannels"
+              >
+            </div>
+            <div class="player-icons">
+              <span class="icon" @click="showAddPlaylistDialog">+</span>
+              <span class="icon settings-icon" @click="toggleSettings">⚙️</span>
+            </div>
+          </div>
         </div>
 
         <!-- 播放器和频道列表区域 -->
@@ -65,7 +86,7 @@
           <!-- 左侧频道列表 -->
           <div class="channel-list" :class="{ 'channel-list-hidden': !showChannelList }">
             <div class="channel-items">
-              <div v-for="channel in selectedPlaylist.channels" 
+              <div v-for="channel in filteredChannels" 
                    :key="channel.id"
                    class="channel-item"
                    :class="{ active: currentChannel?.id === channel.id }"
@@ -146,6 +167,7 @@ export default {
   setup() {
     const searchText = ref('')
     const playlists = ref([])
+    const filteredPlaylists = ref([])
     const selectedPlaylist = ref(null)
     const currentChannel = ref(null)
     const showDialog = ref(false)
@@ -159,14 +181,31 @@ export default {
     const showChannelList = ref(true);
     const showSettings = ref(false)
     const devToolsEnabled = ref(false)
+    const channelSearchText = ref('')
+    const filteredChannels = ref([])
+    
+    // 监听搜索文本变化
+    watch(searchText, (newValue) => {
+      if (!newValue) {
+        filteredPlaylists.value = playlists.value
+        return
+      }
+      
+      const searchLower = newValue.toLowerCase()
+      filteredPlaylists.value = playlists.value.filter(playlist => 
+        playlist.name.toLowerCase().includes(searchLower) ||
+        playlist.channels.some(channel => 
+          channel.name.toLowerCase().includes(searchLower)
+        )
+      )
+    })
     
     onMounted(async () => {
       try {
-        // 加载播放列表
         playlists.value = await window.electronAPI.getPlaylists()
-        // 强制设置为 false 并同步到主进程
-        devToolsEnabled.value = false;
-        await window.electronAPI.toggleDevTools(false);
+        filteredPlaylists.value = playlists.value
+        devToolsEnabled.value = false
+        await window.electronAPI.toggleDevTools(false)
       } catch (error) {
         console.error('Error during initialization:', error)
         alert(`初始化错误: ${error.message}`)
@@ -242,26 +281,18 @@ export default {
               
               window.hls.on(Hls.Events.MEDIA_ATTACHED, () => {
                 console.log('HLS Media attached');
-                // 设置音量为 0
-                videoElement.volume = 0;
+                // 设置默认音量
+                videoElement.volume = 1;
               });
               
               window.hls.on(Hls.Events.MANIFEST_PARSED, () => {
                 console.log('HLS Manifest parsed');
-                // 使用静音自动播放策略
+                // 直接尝试播放
                 const playPromise = videoElement.play();
                 if (playPromise !== undefined) {
                   playPromise
                     .then(() => {
                       console.log('自动播放成功');
-                      // 逐渐增加音量
-                      const fadeIn = setInterval(() => {
-                        if (videoElement.volume < 1) {
-                          videoElement.volume = Math.min(1, videoElement.volume + 0.1);
-                        } else {
-                          clearInterval(fadeIn);
-                        }
-                      }, 200);
                     })
                     .catch(error => {
                       console.log("自动播放失败，尝试静音播放:", error);
@@ -323,20 +354,13 @@ export default {
                 window.mpegtsPlayer.attachMediaElement(videoElement);
                 window.mpegtsPlayer.load();
                
-                // 使用相同的静音自动播放策略
-                videoElement.volume = 0;
+               // 设置默认音量
+               videoElement.volume = 1;
                 const playPromise = window.mpegtsPlayer.play();
                 if (playPromise !== undefined) {
                   playPromise
                     .then(() => {
                       console.log('mpegts 自动播放成功');
-                      const fadeIn = setInterval(() => {
-                        if (videoElement.volume < 1) {
-                          videoElement.volume = Math.min(1, videoElement.volume + 0.1);
-                        } else {
-                          clearInterval(fadeIn);
-                        }
-                      }, 200);
                     })
                     .catch(error => {
                       console.log("mpegts 自动播放失败，尝试静音播放:", error);
@@ -585,9 +609,33 @@ export default {
       await window.electronAPI.toggleDevTools(devToolsEnabled.value);
     }
     
+    // 监听播放列表变化，更新过滤后的频道列表
+    watch([selectedPlaylist, channelSearchText], () => {
+      filterChannels()
+    })
+    
+    // 过滤频道
+    const filterChannels = () => {
+      if (!selectedPlaylist.value) {
+        filteredChannels.value = []
+        return
+      }
+      
+      const searchText = channelSearchText.value.toLowerCase()
+      if (!searchText) {
+        filteredChannels.value = selectedPlaylist.value.channels
+        return
+      }
+      
+      filteredChannels.value = selectedPlaylist.value.channels.filter(channel => 
+        channel.name.toLowerCase().includes(searchText) ||
+        channel.id.toString().includes(searchText)
+      )
+    }
+    
     return {
       searchText,
-      playlists,
+      filteredPlaylists,
       selectedPlaylist,
       currentChannel,
       showDialog,
@@ -608,7 +656,10 @@ export default {
       showSettings,
       devToolsEnabled,
       toggleSettings,
-      toggleDevTools
+      toggleDevTools,
+      channelSearchText,
+      filteredChannels,
+      filterChannels
     }
   }
 }
@@ -631,23 +682,50 @@ export default {
   background-color: #2a2a2a;
 }
 
+.top-left {
+  flex: 1;
+  margin-right: 20px;
+}
+
+.top-right {
+  display: flex;
+  align-items: center;
+}
+
+.search-box {
+  position: relative;
+  max-width: 300px;
+}
+
 .search-box input {
   background-color: #3a3a3a;
   border: none;
   padding: 8px 15px;
+  padding-left: 35px;
   border-radius: 20px;
   color: #fff;
-  width: 200px;
+  width: 100%;
+  font-size: 14px;
 }
 
-.top-icons {
-  display: flex;
-  gap: 20px;
+.search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #666;
+  font-size: 14px;
 }
 
 .icon {
   cursor: pointer;
   font-size: 20px;
+  color: #fff;
+  transition: color 0.3s;
+}
+
+.icon:hover {
+  color: #4CAF50;
 }
 
 .playlists-container {
@@ -1003,10 +1081,56 @@ export default {
 
 .player-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  padding: 15px 20px;
-  background-color: #2a2a2a;
-  border-bottom: 1px solid #3a3a3a;
+  padding: 10px 20px;
+  background: #1a1a1a;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.channel-search {
+  position: relative;
+}
+
+.channel-search input {
+  background: #2a2a2a;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: #fff;
+  width: 200px;
+  font-size: 14px;
+}
+
+.channel-search input::placeholder {
+  color: #666;
+}
+
+.player-icons {
+  display: flex;
+  gap: 15px;
+}
+
+.player-icons .icon {
+  cursor: pointer;
+  font-size: 18px;
+  color: #fff;
+  transition: color 0.3s;
+}
+
+.player-icons .icon:hover {
+  color: #4CAF50;
 }
 
 .back-button {
