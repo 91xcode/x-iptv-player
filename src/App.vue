@@ -34,6 +34,7 @@
               <div class="playlist-cloud-icon">☁️</div>
             </div>
             <div class="playlist-actions">
+              <button class="edit-btn" @click.stop="showEditDialog(playlist)">✏️</button>
               <button class="delete-btn" @click.stop="confirmDelete(playlist)">🗑️</button>
             </div>
           </div>
@@ -132,6 +133,24 @@
         <div class="dialog-buttons">
           <button class="cancel-btn" @click="showDeleteConfirm = false">取消</button>
           <button class="delete-btn" @click="deletePlaylist">删除</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 编辑名称对话框 -->
+    <div v-if="showEditNameDialog" class="dialog-overlay">
+      <div class="dialog-content">
+        <h3>编辑播放列表名称</h3>
+        <input 
+          type="text" 
+          v-model="editingName"
+          class="edit-name-input"
+          placeholder="请输入新名称"
+          @keyup.enter="savePlaylistName"
+        >
+        <div class="dialog-buttons">
+          <button class="cancel-btn" @click="showEditNameDialog = false">取消</button>
+          <button class="save-btn" @click="savePlaylistName">保存</button>
         </div>
       </div>
     </div>
@@ -956,6 +975,55 @@ export default {
 
     const showDetailedLogs = ref(false)
 
+    const showEditNameDialog = ref(false)
+    const editingName = ref('')
+    const editingPlaylist = ref(null)
+
+    const showEditDialog = (playlist) => {
+      editingPlaylist.value = playlist
+      editingName.value = playlist.name
+      showEditNameDialog.value = true
+    }
+
+    const savePlaylistName = async () => {
+      try {
+        if (!editingName.value.trim()) {
+          showToast('名称不能为空', 'error')
+          return
+        }
+
+        // 检查名称是否重复
+        const isDuplicate = playlists.value.some(p => 
+          p.id !== editingPlaylist.value.id && p.name === editingName.value.trim()
+        )
+        
+        if (isDuplicate) {
+          showToast('该名称已存在', 'error')
+          return
+        }
+
+        // 更新播放列表名称
+        const index = playlists.value.findIndex(p => p.id === editingPlaylist.value.id)
+        if (index !== -1) {
+          playlists.value[index].name = editingName.value.trim()
+          // 同步更新过滤后的列表
+          const filteredIndex = filteredPlaylists.value.findIndex(p => p.id === editingPlaylist.value.id)
+          if (filteredIndex !== -1) {
+            filteredPlaylists.value[filteredIndex].name = editingName.value.trim()
+          }
+          
+          // 保存到存储
+          await window.electronAPI.savePlaylist(JSON.parse(JSON.stringify(playlists.value)))
+          
+          showToast('名称修改成功', 'success')
+          showEditNameDialog.value = false
+        }
+      } catch (error) {
+        console.error('保存名称失败:', error)
+        showToast('保存失败: ' + error.message, 'error')
+      }
+    }
+
     return {
       searchText,
       filteredPlaylists,
@@ -993,7 +1061,11 @@ export default {
       clearLogs,
       toggleLogs,
       refreshLogs,
-      showDetailedLogs
+      showDetailedLogs,
+      showEditNameDialog,
+      editingName,
+      showEditDialog,
+      savePlaylistName
     }
   }
 }
@@ -1971,5 +2043,53 @@ export default {
   font-size: 12px;
   line-height: 1.5;
   background: #1e1e1e;
+}
+
+/* 编辑按钮样式 */
+.edit-btn {
+  background: none;
+  border: none;
+  color: #4CAF50;
+  cursor: pointer;
+  padding: 5px;
+  font-size: 18px;
+  opacity: 0.7;
+  transition: opacity 0.3s;
+  margin-right: 5px;
+}
+
+.edit-btn:hover {
+  opacity: 1;
+}
+
+/* 编辑名称输入框样式 */
+.edit-name-input {
+  width: 100%;
+  padding: 8px 12px;
+  margin: 15px 0;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  background: #2a2a2a;
+  color: #fff;
+  font-size: 14px;
+}
+
+.edit-name-input:focus {
+  outline: none;
+  border-color: #4CAF50;
+}
+
+/* 保存按钮样式 */
+.save-btn {
+  background: #4CAF50;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.save-btn:hover {
+  background: #45a049;
 }
 </style> 
