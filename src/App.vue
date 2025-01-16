@@ -158,12 +158,23 @@
     <div v-if="showLogs" class="logs-panel">
       <div class="logs-header">
         <h3>运行日志</h3>
-        <div class="logs-header-buttons">
-          <button class="refresh-btn" @click="refreshLogs" title="刷新日志">
-            <span class="refresh-icon">🔄</span>
-          </button>
-          <button class="clear-btn" @click="clearLogs">清除日志</button>
-          <button class="close-btn" @click="toggleLogs">关闭</button>
+        <div class="logs-controls">
+          <label class="toggle-label">
+            <input 
+              type="checkbox" 
+              v-model="showDetailedLogs"
+              class="toggle-checkbox"
+            >
+            <span class="toggle-switch"></span>
+            <span class="toggle-text">详细加载日志</span>
+          </label>
+          <div class="logs-header-buttons">
+            <button class="refresh-btn" @click="refreshLogs" title="刷新日志">
+              <span class="refresh-icon">🔄</span>
+            </button>
+            <button class="clear-btn" @click="clearLogs">清除日志</button>
+            <button class="close-btn" @click="toggleLogs">关闭</button>
+          </div>
         </div>
       </div>
       <pre class="logs-content">{{ logs }}</pre>
@@ -688,25 +699,29 @@ export default {
           })
 
           window.hls.on(Hls.Events.FRAG_LOADING, (event, data) => {
-            const fragInfo = {
-              sn: data.frag.sn,
-              duration: Math.round(data.frag.duration * 100) / 100 + 's',
-              url: data.frag.url
+            if (showDetailedLogs.value) {
+              const fragInfo = {
+                sn: data.frag.sn,
+                duration: Math.round(data.frag.duration * 100) / 100 + 's',
+                url: data.frag.url
+              }
+              console.log('加载视频片段:', JSON.stringify(fragInfo, null, 2))
             }
-            console.log('加载视频片段:', JSON.stringify(fragInfo, null, 2))
           })
 
           window.hls.on(Hls.Events.BUFFER_APPENDED, (event, data) => {
-            const bufferInfo = {
-              type: data.type,
-              timeRanges: {
-                video: videoElement.buffered.length > 0 ? {
-                  start: videoElement.buffered.start(0),
-                  end: videoElement.buffered.end(0)
-                } : null
+            if (showDetailedLogs.value) {
+              const bufferInfo = {
+                type: data.type,
+                timeRanges: {
+                  video: videoElement.buffered.length > 0 ? {
+                    start: videoElement.buffered.start(0),
+                    end: videoElement.buffered.end(0)
+                  } : null
+                }
               }
+              console.log('缓冲区更新:', JSON.stringify(bufferInfo, null, 2))
             }
-            console.log('缓冲区更新:', JSON.stringify(bufferInfo, null, 2));
           })
 
         } catch (error) {
@@ -935,6 +950,8 @@ export default {
       }
     }
 
+    const showDetailedLogs = ref(false)
+
     return {
       searchText,
       filteredPlaylists,
@@ -971,7 +988,8 @@ export default {
       logs,
       clearLogs,
       toggleLogs,
-      refreshLogs
+      refreshLogs,
+      showDetailedLogs
     }
   }
 }
@@ -1833,12 +1851,12 @@ export default {
 }
 
 .logs-header {
-  padding: 10px;
+  padding: 12px 15px;
   background: #2d2d2d;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   border-bottom: 1px solid #333;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .logs-header h3 {
@@ -1847,101 +1865,107 @@ export default {
   color: #e0e0e0;
 }
 
+.logs-controls {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-checkbox {
+  display: none;
+}
+
+/* 自定义开关样式 */
+.toggle-label .toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 18px;
+  background-color: #555;
+  border-radius: 9px;
+  transition: background-color 0.3s;
+}
+
+.toggle-label .toggle-switch::before {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background-color: white;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.3s;
+}
+
+.toggle-checkbox:checked + .toggle-switch {
+  background-color: #4CAF50;
+}
+
+.toggle-checkbox:checked + .toggle-switch::before {
+  transform: translateX(18px);
+}
+
+.toggle-text {
+  font-size: 12px;
+  color: #ccc;
+}
+
+/* 调整按钮组样式 */
 .logs-header-buttons {
   display: flex;
   gap: 8px;
+  margin-top: 8px;
 }
 
 .logs-header button {
-  padding: 5px 10px;
-  background: #444;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 4px;
   border: none;
   color: #fff;
   cursor: pointer;
-  border-radius: 4px;
-  font-size: 12px;
-  transition: all 0.2s ease;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.logs-header button:active {
-  transform: scale(0.95);
-}
-
-.logs-header .clear-btn {
-  background: #555;
-}
-
-.logs-header .clear-btn:hover {
-  background: #666;
-}
-
-.logs-header .close-btn {
-  background: #666;
-}
-
-.logs-header .close-btn:hover {
-  background: #777;
-}
-
-.logs-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 10px;
-  margin: 0;
-  font-family: 'Consolas', monospace;
-  font-size: 12px;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  color: #d0d0d0;
-}
-
-/* 添加日志颜色样式 */
-.logs-content [data-type="ERROR"] {
-  color: #ff6b6b;
-}
-
-.logs-content [data-type="WARN"] {
-  color: #ffd93d;
-}
-
-.logs-content [data-type="INFO"] {
-  color: #4dabf7;
-}
-
-@keyframes slideIn {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
+  transition: background-color 0.2s;
 }
 
 .refresh-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 5px 8px !important;
   background: #444 !important;
+  padding: 6px 8px !important;
+}
+
+.clear-btn {
+  background: #555;
+}
+
+.close-btn {
+  background: #666;
 }
 
 .refresh-btn:hover {
-  background: #555 !important;
+  background: #505050 !important;
 }
 
-.refresh-icon {
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.3s ease;
+.clear-btn:hover {
+  background: #606060;
 }
 
-.refresh-btn:active .refresh-icon {
-  transform: rotate(180deg);
+.close-btn:hover {
+  background: #707070;
+}
+
+/* 调整日志内容区域样式 */
+.logs-content {
+  padding: 15px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: #1e1e1e;
 }
 </style> 
