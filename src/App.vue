@@ -548,20 +548,25 @@ export default {
     const initHlsPlayer = async (videoElement, url) => {
       return new Promise((resolve, reject) => {
         try {
-          console.log('初始化 HLS 播放器...')
+          console.log('========== HLS播放器初始化开始 ==========')
+          console.log(`播放地址: ${url}`)
+          
           window.hls = new Hls({
             debug: false,
             enableWorker: true,
             lowLatencyMode: true,
+            fragLoadingTimeOut: 20000,
+            manifestLoadingTimeOut: 20000,
+            levelLoadingTimeOut: 20000,
+            manifestLoadingMaxRetry: 4,
+            levelLoadingMaxRetry: 4,
+            fragLoadingMaxRetry: 4,
+            manifestLoadingRetryDelay: 1000,
+            levelLoadingRetryDelay: 1000,
+            fragLoadingRetryDelay: 1000,
             maxBufferLength: 10,
             maxMaxBufferLength: 30,
             backBufferLength: 30,
-            fragLoadingTimeOut: 10000,
-            manifestLoadingTimeOut: 10000,
-            levelLoadingTimeOut: 10000,
-            manifestLoadingMaxRetry: 2,
-            levelLoadingMaxRetry: 2,
-            fragLoadingMaxRetry: 2,
             startLevel: -1,
             abrEwmaDefaultEstimate: 500000,
             progressive: true,
@@ -569,23 +574,39 @@ export default {
           })
 
           window.hls.loadSource(url)
-          console.log('HLS 加载源:', url)
+          console.log('开始加载视频源...')
+          
           window.hls.attachMedia(videoElement)
+          console.log('HLS媒体已附加到视频元素')
 
           window.hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-            console.log('HLS Media 已附加')
-            videoElement.volume = 1
+            console.log('媒体附加成功，音量设置为:', videoElement.volume)
           })
 
-          window.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            console.log('HLS Manifest 解析完成')
+          window.hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+            const manifestInfo = {
+              levels: data.levels.length,
+              firstLevel: data.firstLevel,
+              audioTracks: data.audioTracks?.length || 0,
+              subtitleTracks: data.subtitleTracks?.length || 0
+            }
+            console.log('HLS清单解析完成:', JSON.stringify(manifestInfo, null, 2))
+            
+            if(data.levels.length > 1) {
+              const levelsInfo = data.levels.map(level => ({
+                height: level.height,
+                bitrate: Math.round(level.bitrate / 1024) + 'kbps'
+              }))
+              console.log('可用清晰度:', JSON.stringify(levelsInfo, null, 2))
+            }
+
             videoElement.play()
               .then(() => {
-                console.log('播放开始')
+                console.log('播放开始成功')
                 resolve()
               })
               .catch(error => {
-                console.log('自动播放失败，尝试静音播放:', error)
+                console.log('自动播放失败，尝试静音播放:', error.message)
                 videoElement.muted = true
                 videoElement.play()
                   .then(() => resolve())
@@ -593,14 +614,103 @@ export default {
               })
           })
 
+          // 添加更多事件监听
+          window.hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+            const switchInfo = {
+              level: data.level,
+              height: window.hls.levels[data.level]?.height,
+              bitrate: Math.round(window.hls.levels[data.level]?.bitrate / 1024) + 'kbps'
+            }
+            console.log('清晰度切换:', JSON.stringify(switchInfo, null, 2))
+          })
+
           window.hls.on(Hls.Events.ERROR, (event, data) => {
-            console.error('HLS 错误:', data)
+            const errorInfo = {
+              type: data.type,
+              details: data.details,
+              fatal: data.fatal,
+              url: data.url,
+              response: data.response ? {
+                code: data.response.code,
+                text: data.response.text
+              } : null
+            }
+            
+            let errorDescription = '未知错误';
+            switch (data.details) {
+              case 'manifestLoadError':
+                errorDescription = '播放列表加载失败';
+                break;
+              case 'manifestLoadTimeOut':
+                errorDescription = '播放列表加载超时';
+                break;
+              case 'manifestParsingError':
+                errorDescription = '播放列表解析失败';
+                break;
+              case 'levelLoadError':
+                errorDescription = '视频清晰度信息加载失败';
+                break;
+              case 'levelLoadTimeOut':
+                errorDescription = '视频清晰度信息加载超时';
+                break;
+              case 'fragLoadError':
+                errorDescription = '视频片段加载失败';
+                break;
+              case 'fragLoadTimeOut':
+                errorDescription = '视频片段加载超时，正在重试...';
+                break;
+              case 'bufferAddCodecError':
+                errorDescription = '视频编码不支持';
+                break;
+              case 'bufferAppendError':
+                errorDescription = '视频缓冲区写入失败';
+                break;
+              case 'bufferFullError':
+                errorDescription = '视频缓冲区已满';
+                break;
+              case 'bufferStalledError':
+                errorDescription = '视频缓冲区暂停';
+                break;
+            }
+
+            errorInfo.description = errorDescription;
+            
             if (data.fatal) {
-              reject(new Error('HLS 播放失败'))
+              console.error('HLS致命错误:', JSON.stringify(errorInfo, null, 2));
+              reject(new Error(`播放失败: ${errorDescription}`));
+            } else {
+              console.warn('HLS警告:', JSON.stringify(errorInfo, null, 2));
+              
+              if (data.details === 'fragLoadTimeOut') {
+                showToast('视频片段加载超时，正在重试...', 'info');
+              }
             }
           })
+
+          window.hls.on(Hls.Events.FRAG_LOADING, (event, data) => {
+            const fragInfo = {
+              sn: data.frag.sn,
+              duration: Math.round(data.frag.duration * 100) / 100 + 's',
+              url: data.frag.url
+            }
+            console.log('加载视频片段:', JSON.stringify(fragInfo, null, 2))
+          })
+
+          window.hls.on(Hls.Events.BUFFER_APPENDED, (event, data) => {
+            const bufferInfo = {
+              type: data.type,
+              timeRanges: {
+                video: videoElement.buffered.length > 0 ? {
+                  start: videoElement.buffered.start(0),
+                  end: videoElement.buffered.end(0)
+                } : null
+              }
+            }
+            console.log('缓冲区更新:', JSON.stringify(bufferInfo, null, 2));
+          })
+
         } catch (error) {
-          console.error('HLS 初始化错误:', error)
+          console.error('HLS播放器初始化错误:', error)
           reject(error)
         }
       })
@@ -610,9 +720,11 @@ export default {
     const initMpegtsPlayer = async (videoElement, url) => {
       return new Promise((resolve, reject) => {
         try {
-          console.log('初始化 mpegts 播放器...')
+          console.log('========== MPEGTS播放器初始化开始 ==========')
+          console.log(`播放地址: ${url}`)
+
           if (!mpegts.getFeatureList().mseLivePlayback) {
-            throw new Error('您的浏览器不支持播放此视频格式')
+            throw new Error('浏览器不支持MSE直播回放')
           }
 
           window.mpegtsPlayer = mpegts.createPlayer({
@@ -627,31 +739,40 @@ export default {
             autoCleanupSourceBuffer: true
           })
 
-          console.log('mpegts 播放器创建成功')
+          console.log('MPEGTS播放器创建成功')
+          
           window.mpegtsPlayer.attachMediaElement(videoElement)
+          console.log('媒体元素已附加')
+          
           window.mpegtsPlayer.load()
-          console.log('mpegts 加载源:', url)
+          console.log('开始加载视频流')
 
-          videoElement.volume = 1
-          window.mpegtsPlayer.play()
-            .then(() => {
-              console.log('播放开始')
-              resolve()
-            })
-            .catch(error => {
-              console.log('mpegts 自动播放失败，尝试静音播放:', error)
-              videoElement.muted = true
-              window.mpegtsPlayer.play()
-                .then(() => resolve())
-                .catch(reject)
-            })
+          window.mpegtsPlayer.on(mpegts.Events.LOADING_COMPLETE, () => {
+            console.log('视频流加载完成')
+          })
+
+          window.mpegtsPlayer.on(mpegts.Events.STATISTICS_INFO, (stats) => {
+            const statsInfo = {
+              speed: Math.round(stats.speed * 100) / 100 + 'KB/s',
+              fps: Math.round(stats.fps),
+              dropped: stats.dropped
+            }
+            console.log('播放统计:', JSON.stringify(statsInfo, null, 2))
+          })
 
           window.mpegtsPlayer.on(mpegts.Events.ERROR, (error) => {
-            console.error('mpegts 错误:', error)
-            reject(new Error('播放失败: ' + error.message))
+            const errorInfo = {
+              code: error.code,
+              msg: error.msg,
+              detail: error.detail
+            }
+            console.error('MPEGTS错误:', JSON.stringify(errorInfo, null, 2))
+            reject(new Error(`播放错误: ${error.msg}`))
           })
+
+          // ... 其他代码保持不变
         } catch (error) {
-          console.error('mpegts 初始化错误:', error)
+          console.error('MPEGTS播放器初始化错误:', error)
           reject(error)
         }
       })
