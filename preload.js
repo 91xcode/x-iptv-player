@@ -61,5 +61,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   toggleDevTools: (enabled) => ipcRenderer.invoke('toggle-dev-tools', enabled),
 
-  getDevToolsState: () => ipcRenderer.invoke('get-dev-tools-state')
+  getDevToolsState: () => ipcRenderer.invoke('get-dev-tools-state'),
+
+  getLogs: () => ipcRenderer.invoke('get-logs'),
+  clearLogs: () => ipcRenderer.invoke('clear-logs'),
 }) 

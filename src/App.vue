@@ -148,6 +148,25 @@
         <span>开发者工具</span>
         <span class="toggle-switch" :class="{ active: devToolsEnabled }"></span>
       </div>
+      <div class="settings-item" @click="toggleLogs">
+        <span>显示日志</span>
+        <span class="toggle-switch" :class="{ active: showLogs }"></span>
+      </div>
+    </div>
+
+    <!-- 添加日志查看面板 -->
+    <div v-if="showLogs" class="logs-panel">
+      <div class="logs-header">
+        <h3>运行日志</h3>
+        <div class="logs-header-buttons">
+          <button class="refresh-btn" @click="refreshLogs" title="刷新日志">
+            <span class="refresh-icon">🔄</span>
+          </button>
+          <button class="clear-btn" @click="clearLogs">清除日志</button>
+          <button class="close-btn" @click="toggleLogs">关闭</button>
+        </div>
+      </div>
+      <pre class="logs-content">{{ logs }}</pre>
     </div>
   </div>
 </template>
@@ -225,18 +244,21 @@ export default {
     
     const playChannel = async (channel) => {
       try {
-        console.log('开始播放频道:', channel.url)
+        console.log('开始播放频道:', channel.name, '地址:', channel.url)
         currentChannel.value = channel
         videoPlayer.value = document.getElementById('iptv-player')
         
         if (videoPlayer.value) {
           showToast('正在加载频道...', 'info')
+          console.log('初始化播放器...')
           
           // 预连接到服务器
           preconnectToServer(channel.url)
+          console.log('预连接到服务器:', channel.url)
           
           // 清理现有播放器
           await cleanupPlayers()
+          console.log('清理现有播放器完成')
           
           // 重置视频元素
           videoPlayer.value.pause()
@@ -250,10 +272,13 @@ export default {
           try {
             // 尝试使用 HLS.js 播放
             if (Hls.isSupported() && channel.url.includes('.m3u8')) {
+              console.log('使用 HLS.js 播放器')
               await initHlsPlayer(videoPlayer.value, channel.url)
             } else {
+              console.log('使用 mpegts.js 播放器')
               await initMpegtsPlayer(videoPlayer.value, channel.url)
             }
+            console.log('播放器初始化成功')
           } catch (error) {
             console.error('播放器初始化失败:', error)
             showToast(`播放失败: ${error.message}`, 'error')
@@ -454,8 +479,21 @@ export default {
     }
     
     const toggleDevTools = async () => {
-      devToolsEnabled.value = !devToolsEnabled.value;
-      await window.electronAPI.toggleDevTools(devToolsEnabled.value);
+      try {
+        devToolsEnabled.value = !devToolsEnabled.value;
+        const result = await window.electronAPI.toggleDevTools(devToolsEnabled.value);
+        if (result.error) {
+          console.error('Failed to toggle dev tools:', result.error);
+          showToast('Failed to toggle dev tools: ' + result.error, 'error');
+          // Revert the toggle if there was an error
+          devToolsEnabled.value = !devToolsEnabled.value;
+        }
+      } catch (error) {
+        console.error('Error toggling dev tools:', error);
+        showToast('Error toggling dev tools: ' + error.message, 'error');
+        // Revert the toggle if there was an error
+        devToolsEnabled.value = !devToolsEnabled.value;
+      }
     }
     
     // 监听播放列表变化，更新过滤后的频道列表
@@ -510,6 +548,7 @@ export default {
     const initHlsPlayer = async (videoElement, url) => {
       return new Promise((resolve, reject) => {
         try {
+          console.log('初始化 HLS 播放器...')
           window.hls = new Hls({
             debug: false,
             enableWorker: true,
@@ -530,17 +569,21 @@ export default {
           })
 
           window.hls.loadSource(url)
+          console.log('HLS 加载源:', url)
           window.hls.attachMedia(videoElement)
 
           window.hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-            console.log('HLS Media attached')
+            console.log('HLS Media 已附加')
             videoElement.volume = 1
           })
 
           window.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            console.log('HLS Manifest parsed')
+            console.log('HLS Manifest 解析完成')
             videoElement.play()
-              .then(() => resolve())
+              .then(() => {
+                console.log('播放开始')
+                resolve()
+              })
               .catch(error => {
                 console.log('自动播放失败，尝试静音播放:', error)
                 videoElement.muted = true
@@ -551,11 +594,13 @@ export default {
           })
 
           window.hls.on(Hls.Events.ERROR, (event, data) => {
+            console.error('HLS 错误:', data)
             if (data.fatal) {
               reject(new Error('HLS 播放失败'))
             }
           })
         } catch (error) {
+          console.error('HLS 初始化错误:', error)
           reject(error)
         }
       })
@@ -565,9 +610,9 @@ export default {
     const initMpegtsPlayer = async (videoElement, url) => {
       return new Promise((resolve, reject) => {
         try {
+          console.log('初始化 mpegts 播放器...')
           if (!mpegts.getFeatureList().mseLivePlayback) {
-            reject(new Error('您的浏览器不支持播放此视频格式'))
-            return
+            throw new Error('您的浏览器不支持播放此视频格式')
           }
 
           window.mpegtsPlayer = mpegts.createPlayer({
@@ -582,12 +627,17 @@ export default {
             autoCleanupSourceBuffer: true
           })
 
+          console.log('mpegts 播放器创建成功')
           window.mpegtsPlayer.attachMediaElement(videoElement)
           window.mpegtsPlayer.load()
+          console.log('mpegts 加载源:', url)
 
           videoElement.volume = 1
           window.mpegtsPlayer.play()
-            .then(() => resolve())
+            .then(() => {
+              console.log('播放开始')
+              resolve()
+            })
             .catch(error => {
               console.log('mpegts 自动播放失败，尝试静音播放:', error)
               videoElement.muted = true
@@ -597,9 +647,11 @@ export default {
             })
 
           window.mpegtsPlayer.on(mpegts.Events.ERROR, (error) => {
+            console.error('mpegts 错误:', error)
             reject(new Error('播放失败: ' + error.message))
           })
         } catch (error) {
+          console.error('mpegts 初始化错误:', error)
           reject(error)
         }
       })
@@ -673,6 +725,95 @@ export default {
       }
     }
 
+    // 添加日志查看面板
+    const showLogs = ref(false)
+    const logs = ref('')
+
+    // 修改 toggleLogs 函数
+    const toggleLogs = async () => {
+      showLogs.value = !showLogs.value
+      if (showLogs.value) {
+        // 当开启日志显示时，立即获取历史日志
+        try {
+          const historicalLogs = await window.electronAPI.getLogs()
+          if (historicalLogs) {
+            logs.value = historicalLogs
+            nextTick(() => {
+              const logsContent = document.querySelector('.logs-content')
+              if (logsContent) {
+                logsContent.scrollTop = logsContent.scrollHeight
+              }
+            })
+          }
+        } catch (error) {
+          console.error('获取历史日志失败:', error)
+        }
+      }
+    }
+
+    // 添加日志监听器
+    onMounted(() => {
+      if (window.require) {
+        const { ipcRenderer } = window.require('electron')
+        ipcRenderer.on('console-log', (event, message) => {
+          if (message && typeof message === 'string') {
+            // 添加新日志
+            logs.value += message + '\n'
+            
+            // 限制日志行数
+            const logLines = logs.value.split('\n')
+            if (logLines.length > 1000) { // 限制最大行数
+              logs.value = logLines.slice(-1000).join('\n')
+            }
+            
+            // 自动滚动到底部
+            nextTick(() => {
+              const logsContent = document.querySelector('.logs-content')
+              if (logsContent && showLogs.value) {
+                logsContent.scrollTop = logsContent.scrollHeight
+              }
+            })
+          }
+        })
+      }
+    })
+
+    // 清除日志
+    const clearLogs = async () => {
+      try {
+        await window.electronAPI.clearLogs()
+        logs.value = ''
+      } catch (error) {
+        console.error('清除日志失败:', error)
+        showToast('清除日志失败: ' + error.message, 'error')
+      }
+    }
+
+    // 添加一些测试日志
+    onMounted(() => {
+      console.log('Vue 应用已加载')
+      console.info('日志系统已初始化')
+    })
+
+    // 在 setup 函数中添加 refreshLogs 方法
+    const refreshLogs = async () => {
+      try {
+        const historicalLogs = await window.electronAPI.getLogs()
+        if (historicalLogs) {
+          logs.value = historicalLogs
+          nextTick(() => {
+            const logsContent = document.querySelector('.logs-content')
+            if (logsContent) {
+              logsContent.scrollTop = logsContent.scrollHeight
+            }
+          })
+        }
+      } catch (error) {
+        console.error('刷新日志失败:', error)
+        showToast('刷新日志失败: ' + error.message, 'error')
+      }
+    }
+
     return {
       searchText,
       filteredPlaylists,
@@ -704,7 +845,12 @@ export default {
       initHlsPlayer,
       initMpegtsPlayer,
       preconnectToServer,
-      parseM3UContent
+      parseM3UContent,
+      showLogs,
+      logs,
+      clearLogs,
+      toggleLogs,
+      refreshLogs
     }
   }
 }
@@ -1547,5 +1693,134 @@ export default {
 
 .settings-icon {
   cursor: pointer;
+}
+
+/* 添加日志面板样式 */
+.logs-panel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 400px;
+  height: 100vh;
+  background: #1e1e1e;
+  color: #fff;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #333;
+  animation: slideIn 0.3s ease;
+}
+
+.logs-header {
+  padding: 10px;
+  background: #2d2d2d;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #333;
+}
+
+.logs-header h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #e0e0e0;
+}
+
+.logs-header-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.logs-header button {
+  padding: 5px 10px;
+  background: #444;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.logs-header button:active {
+  transform: scale(0.95);
+}
+
+.logs-header .clear-btn {
+  background: #555;
+}
+
+.logs-header .clear-btn:hover {
+  background: #666;
+}
+
+.logs-header .close-btn {
+  background: #666;
+}
+
+.logs-header .close-btn:hover {
+  background: #777;
+}
+
+.logs-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  margin: 0;
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  color: #d0d0d0;
+}
+
+/* 添加日志颜色样式 */
+.logs-content [data-type="ERROR"] {
+  color: #ff6b6b;
+}
+
+.logs-content [data-type="WARN"] {
+  color: #ffd93d;
+}
+
+.logs-content [data-type="INFO"] {
+  color: #4dabf7;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px !important;
+  background: #444 !important;
+}
+
+.refresh-btn:hover {
+  background: #555 !important;
+}
+
+.refresh-icon {
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.3s ease;
+}
+
+.refresh-btn:active .refresh-icon {
+  transform: rotate(180deg);
 }
 </style> 
