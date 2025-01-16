@@ -868,6 +868,10 @@ export default {
     // 修改 toggleLogs 函数
     const toggleLogs = async () => {
       showLogs.value = !showLogs.value
+      // 关闭日志面板时同时关闭设置菜单
+      if (!showLogs.value) {
+        showSettings.value = false
+      }
       if (showLogs.value) {
         // 当开启日志显示时，立即获取历史日志
         try {
