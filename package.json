@@ -11,7 +11,11 @@
     "preview": "vite preview",
     "electron:dev": "cross-env NODE_ENV=development concurrently \"vite\" \"electron .\"",
     "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "electron:build": "vite build && electron-builder",
+    "electron:build:mac": "vite build && electron-builder --mac",
+    "electron:build:win": "vite build && electron-builder --win",
+    "electron:build:linux": "vite build && electron-builder --linux"
   },
   "build": {
     "appId": "com.iptv.player",
@@ -64,7 +68,7 @@
     "concurrently": "^8.0.1",
     "cross-env": "^7.0.3",
     "electron": "^25.0.0",
-    "electron-builder": "^24.0.0",
+    "electron-builder": "^24.6.4",
     "electron-rebuild": "^3.2.9",
     "vite": "^4.0.0",
     "wait-on": "^7.0.1"
