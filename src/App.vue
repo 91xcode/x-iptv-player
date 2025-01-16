@@ -184,6 +184,9 @@ export default {
     const channelSearchText = ref('')
     const filteredChannels = ref([])
     
+    // 添加播放器相关的状态
+    const videoPlayer = ref(null)
+    
     // 监听搜索文本变化
     watch(searchText, (newValue) => {
       if (!newValue) {
@@ -208,14 +211,12 @@ export default {
         await window.electronAPI.toggleDevTools(false)
       } catch (error) {
         console.error('Error during initialization:', error)
-        alert(`初始化错误: ${error.message}`)
+        showToast('初始化错误: ' + error.message, 'error')
       }
     })
 
     onBeforeUnmount(() => {
-      if (player.value) {
-        player.value.dispose()
-      }
+      cleanupPlayers()
     })
     
     const selectPlaylist = (playlist) => {
@@ -224,170 +225,45 @@ export default {
     
     const playChannel = async (channel) => {
       try {
-        console.log('开始播放频道:', channel.url);
-        currentChannel.value = channel;
-        const videoElement = document.getElementById('iptv-player');
+        console.log('开始播放频道:', channel.url)
+        currentChannel.value = channel
+        videoPlayer.value = document.getElementById('iptv-player')
         
-        if (videoElement) {
-          showToast('正在加载频道...', 'info');
-
+        if (videoPlayer.value) {
+          showToast('正在加载频道...', 'info')
+          
+          // 预连接到服务器
+          preconnectToServer(channel.url)
+          
+          // 清理现有播放器
+          await cleanupPlayers()
+          
+          // 重置视频元素
+          videoPlayer.value.pause()
+          videoPlayer.value.currentTime = 0
+          videoPlayer.value.src = ''
+          
+          // 设置低延迟模式
+          videoPlayer.value.preload = 'auto'
+          videoPlayer.value.autoplay = true
+          
           try {
-            // 清理现有播放器
-            if (window.hls) {
-              try {
-                window.hls.destroy();
-              } catch (e) {
-                console.error('HLS destroy error:', e);
-              }
-              window.hls = null;
-            }
-            if (window.mpegtsPlayer) {
-              try {
-                window.mpegtsPlayer.destroy();
-              } catch (e) {
-                console.error('mpegts destroy error:', e);
-              }
-              window.mpegtsPlayer = null;
-            }
-
-            // 重置视频元素
-            videoElement.pause();
-            videoElement.currentTime = 0;
-            videoElement.src = '';
-
             // 尝试使用 HLS.js 播放
             if (Hls.isSupported() && channel.url.includes('.m3u8')) {
-              window.hls = new Hls({
-                debug: false,
-                enableWorker: true,
-                lowLatencyMode: true,
-                backBufferLength: 90,
-                maxBufferLength: 30,
-                maxMaxBufferLength: 600,
-                enableSoftwareAES: true,
-                manifestLoadingTimeOut: 20000,
-                manifestLoadingMaxRetry: 3,
-                levelLoadingTimeOut: 20000,
-                levelLoadingMaxRetry: 3,
-                fragLoadingTimeOut: 20000,
-                fragLoadingMaxRetry: 3,
-                xhrSetup: function(xhr, url) {
-                  xhr.withCredentials = false;
-                }
-              });
-
-              window.hls.loadSource(channel.url);
-              window.hls.attachMedia(videoElement);
-              
-              window.hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-                console.log('HLS Media attached');
-                // 设置默认音量
-                videoElement.volume = 1;
-              });
-              
-              window.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                console.log('HLS Manifest parsed');
-                // 直接尝试播放
-                const playPromise = videoElement.play();
-                if (playPromise !== undefined) {
-                  playPromise
-                    .then(() => {
-                      console.log('自动播放成功');
-                    })
-                    .catch(error => {
-                      console.log("自动播放失败，尝试静音播放:", error);
-                      videoElement.muted = true;
-                      videoElement.play().catch(e => {
-                        console.error("静音播放也失败:", e);
-                        showToast('播放失败，请手动点击播放按钮', 'error');
-                      });
-                    });
-                }
-              });
-
-              window.hls.on(Hls.Events.ERROR, function(event, data) {
-                if (data.fatal) {
-                  switch(data.type) {
-                    case Hls.ErrorTypes.NETWORK_ERROR:
-                      console.error("网络错误，尝试使用 mpegts.js");
-                      tryMpegts();
-                      break;
-                    case Hls.ErrorTypes.MEDIA_ERROR:
-                      console.error("媒体错误，尝试使用 mpegts.js");
-                      tryMpegts();
-                      break;
-                    default:
-                      console.error("无法恢复的错误，尝试使用 mpegts.js");
-                      tryMpegts();
-                      break;
-                  }
-                }
-              });
+              await initHlsPlayer(videoPlayer.value, channel.url)
             } else {
-              // 使用 mpegts.js 播放
-              tryMpegts();
+              await initMpegtsPlayer(videoPlayer.value, channel.url)
             }
-
-            // mpegts.js 播放函数
-            function tryMpegts() {
-              if (window.hls) {
-                window.hls.destroy();
-                window.hls = null;
-              }
-              
-              if (mpegts.getFeatureList().mseLivePlayback) {
-                window.mpegtsPlayer = mpegts.createPlayer({
-                  type: 'mse',
-                  url: channel.url,
-                  isLive: true,
-                  enableStashBuffer: false,
-                  stashInitialSize: 128,
-                  cors: false,
-                  withCredentials: false,
-                  liveBufferLatencyChasing: true,
-                  autoCleanupSourceBuffer: true,
-                  xhrSetup: function(xhr, url) {
-                    xhr.withCredentials = false;
-                  }
-                });
-                
-                window.mpegtsPlayer.attachMediaElement(videoElement);
-                window.mpegtsPlayer.load();
-               
-               // 设置默认音量
-               videoElement.volume = 1;
-                const playPromise = window.mpegtsPlayer.play();
-                if (playPromise !== undefined) {
-                  playPromise
-                    .then(() => {
-                      console.log('mpegts 自动播放成功');
-                    })
-                    .catch(error => {
-                      console.log("mpegts 自动播放失败，尝试静音播放:", error);
-                      videoElement.muted = true;
-                      window.mpegtsPlayer.play();
-                    });
-                }
-                
-                window.mpegtsPlayer.on(mpegts.Events.ERROR, (error) => {
-                  console.error('mpegts.js error:', error);
-                  showToast('播放失败，请尝试其他频道', 'error');
-                });
-              } else {
-                showToast('您的浏览器不支持播放此视频格式', 'error');
-              }
-            }
-
           } catch (error) {
-            console.error('播放频道失败:', error);
-            showToast(`播放失败: ${error.message}`, 'error');
+            console.error('播放器初始化失败:', error)
+            showToast(`播放失败: ${error.message}`, 'error')
           }
         }
       } catch (error) {
-        console.error('播放频道出错:', error);
-        showToast(`播放出错: ${error.message}`, 'error');
+        console.error('播放频道出错:', error)
+        showToast(`播放出错: ${error.message}`, 'error')
       }
-    };
+    }
 
     const showAddPlaylistDialog = () => {
       showDialog.value = true
@@ -395,131 +271,104 @@ export default {
     
     const addPlaylist = async (url, localContent = null, singlePlaylist = null) => {
       try {
+        showToast('正在添加播放列表...', 'info')
+        
         // 如果是单个 m3u8 地址
         if (singlePlaylist) {
-          playlists.value = [...playlists.value, singlePlaylist];
-          await window.electronAPI.savePlaylist(JSON.parse(JSON.stringify(playlists.value)));
-          showToast('播放源添加成功', 'success');
-          showDialog.value = false;
-          return;
+          const newPlaylist = {
+            ...singlePlaylist,
+            id: Date.now().toString(), // 确保 ID 唯一
+            type: 'single'
+          }
+          
+          // 检查是否已存在相同URL的播放列表，但只提示不阻止
+          const existingPlaylist = playlists.value.find(p => p.url === newPlaylist.url)
+          if (existingPlaylist) {
+            showToast(`注意：该播放源已存在于列表"${existingPlaylist.name}"中`, 'info')
+          }
+          
+          // 生成唯一名称
+          let name = newPlaylist.name
+          let nameIndex = 1
+          while (playlists.value.some(p => p.name === name)) {
+            name = `${newPlaylist.name} (${nameIndex})`
+            nameIndex++
+          }
+          newPlaylist.name = name
+          
+          // 更新本地状态
+          playlists.value.unshift(newPlaylist)
+          filteredPlaylists.value.unshift(newPlaylist)
+          
+          // 保存到存储
+          await window.electronAPI.savePlaylist(JSON.parse(JSON.stringify(playlists.value)))
+          
+          showToast('播放源添加成功', 'success')
+          showDialog.value = false
+          return
         }
 
-        let content;
-        console.log('开始添加播放列表:', url);
+        let content
+        console.log('开始添加播放列表:', url)
+        
+        // 检查是否已存在相同URL的播放列表，但只提示不阻止
+        const existingPlaylist = playlists.value.find(p => p.url === url)
+        if (existingPlaylist) {
+          showToast(`注意：该地址已存在于列表"${existingPlaylist.name}"中`, 'info')
+        }
         
         if (localContent) {
-          content = localContent;
+          content = localContent
         } else {
-          // 使用 electron 的 ipcRenderer 来发送请求
-          try {
-            const result = await window.electronAPI.fetchPlaylist(url);
-            if (result.error) {
-              throw new Error(result.error);
-            }
-            content = result.content;
-          } catch (error) {
-            console.error('获取播放列表失败:', error);
-            showToast(`获取播放列表失败: ${error.message}`, 'error');
-            return;
+          const result = await window.electronAPI.fetchPlaylist(url)
+          if (result.error) {
+            throw new Error(result.error)
           }
+          content = result.content
         }
 
         // 验证内容
         if (!content || !content.trim()) {
-          throw new Error('播放列表内容为空');
+          throw new Error('播放列表内容为空')
         }
 
         // 解析 M3U/M3U8 内容
-        const lines = content.split('\n');
-        const channels = [];
-        let currentChannel = null;
-
-        for (let line of lines) {
-          line = line.trim();
-          if (!line) continue;
-          
-          if (line.startsWith('#EXTINF:')) {
-            // 解析频道信息
-            const titleMatch = line.match(/,(.+)$/);
-            const tvgNameMatch = line.match(/tvg-name="([^"]+)"/);
-            const tvgLogoMatch = line.match(/tvg-logo="([^"]+)"/);
-            const groupMatch = line.match(/group-title="([^"]+)"/);
-            
-            currentChannel = {
-              id: String(channels.length + 1),
-              name: tvgNameMatch ? tvgNameMatch[1] : (titleMatch ? titleMatch[1].trim() : `Channel ${channels.length + 1}`),
-              logo: tvgLogoMatch ? tvgLogoMatch[1] : '',
-              group: groupMatch ? groupMatch[1] : '未分类',
-              url: ''
-            };
-          } else if (line && !line.startsWith('#') && currentChannel) {
-            currentChannel.url = line.startsWith('http') ? line : new URL(line, url).href;
-            channels.push({ ...currentChannel });
-            currentChannel = null;
-          }
+        const channels = parseM3UContent(content, url)
+        if (channels.length === 0) {
+          throw new Error('未找到有效的频道信息')
         }
 
-        if (channels.length === 0) {
-          throw new Error('未找到有效的频道信息');
+        // 生成唯一名称
+        let name = url.split('/').pop() || '新播放列表'
+        let nameIndex = 1
+        let originalName = name
+        while (playlists.value.some(p => p.name === name)) {
+          name = `${originalName} (${nameIndex})`
+          nameIndex++
         }
 
         // 创建新的播放列表对象
-        const playlist = {
+        const newPlaylist = {
           id: Date.now().toString(),
-          name: url.split('/').pop() || '新播放列表',
+          name: name,
           url: url,
           channels: channels,
-          type: 'remote'
-        };
+          type: 'remote',
+          addedAt: new Date().toISOString()
+        }
 
-        // 保存播放列表
-        playlists.value = [...playlists.value, playlist];
-        await window.electronAPI.savePlaylist(JSON.parse(JSON.stringify(playlists.value)));
+        // 更新本地状态
+        playlists.value.unshift(newPlaylist)
+        filteredPlaylists.value.unshift(newPlaylist)
         
-        showToast('播放列表添加成功', 'success');
-        showDialog.value = false;
+        // 保存到存储
+        await window.electronAPI.savePlaylist(JSON.parse(JSON.stringify(playlists.value)))
         
+        showToast('播放列表添加成功', 'success')
+        showDialog.value = false
       } catch (error) {
-        console.error('添加播放列表失败:', error);
-        showToast(error.message || '添加播放列表失败，请稍后重试', 'error');
-      }
-    };
-    
-    const addTestPlaylist = async () => {
-      try {
-        const testUrls = [
-          'http://39.134.24.162/dbiptv.sn.chinamobile.com/PLTV/88888890/224/3221225804/index.m3u8',
-          'http://39.134.24.162/dbiptv.sn.chinamobile.com/PLTV/88888890/224/3221226195/index.m3u8',
-          'http://39.134.24.166/dbiptv.sn.chinamobile.com/PLTV/88888890/224/3221226397/index.m3u8',
-          'http://39.134.24.162/dbiptv.sn.chinamobile.com/PLTV/88888890/224/3221226191/index.m3u8',
-          'http://39.134.24.162/dbiptv.sn.chinamobile.com/PLTV/88888890/224/3221226395/index.m3u8'
-        ];
-
-        const channels = [
-          { name: 'CCTV-1 综合', url: testUrls[0] },
-          { name: 'CCTV-2 财经', url: testUrls[1] },
-          { name: 'CCTV-3 综艺', url: testUrls[2] },
-          { name: 'CCTV-4 中文国际', url: testUrls[3] },
-          { name: 'CCTV-5 体育', url: testUrls[4] }
-        ].map((channel, index) => ({
-          id: index,
-          name: channel.name,
-          url: channel.url
-        }));
-
-        const newPlaylist = {
-          id: Date.now(),
-          name: '测试频道',
-          url: 'local',
-          channels
-        };
-
-        playlists.value.push(newPlaylist);
-        await window.electronAPI.savePlaylist(playlists.value);
-        selectedPlaylist.value = newPlaylist;
-      } catch (error) {
-        console.error('Failed to add test playlist:', error);
-        alert(`Failed to add test playlist: ${error.message}`);
+        console.error('添加播放列表失败:', error)
+        showToast(error.message || '添加播放列表失败，请稍后重试', 'error')
       }
     };
     
@@ -532,6 +381,9 @@ export default {
       try {
         if (!playlistToDelete.value) return
         
+        showToast('正在删除播放列表...', 'info')
+        
+        // 调用 API 删除播放列表
         const result = await window.electronAPI.deletePlaylist(playlistToDelete.value.id)
         
         if (result.error) {
@@ -539,18 +391,25 @@ export default {
         }
         
         // 从本地状态中移除
-        playlists.value = playlists.value.filter(p => p.id !== playlistToDelete.value.id)
-        
-        // 如果删除的是当前选中的播放列表，清除选中状态
-        if (selectedPlaylist.value?.id === playlistToDelete.value.id) {
-          selectedPlaylist.value = null
+        const index = playlists.value.findIndex(p => p.id === playlistToDelete.value.id)
+        if (index !== -1) {
+          playlists.value.splice(index, 1)
+          // 同步更新过滤后的列表
+          filteredPlaylists.value = filteredPlaylists.value.filter(p => p.id !== playlistToDelete.value.id)
+          
+          // 如果删除的是当前选中的播放列表，清除选中状态
+          if (selectedPlaylist.value?.id === playlistToDelete.value.id) {
+            selectedPlaylist.value = null
+          }
+          
+          showToast('播放列表删除成功', 'success')
         }
         
         showDeleteConfirm.value = false
         playlistToDelete.value = null
       } catch (error) {
-        console.error('Failed to delete playlist:', error)
-        alert(`Failed to delete playlist: ${error.message}`)
+        console.error('删除播放列表失败:', error)
+        showToast('删除播放列表失败: ' + error.message, 'error')
       }
     }
     
@@ -567,34 +426,24 @@ export default {
     
     const handleBack = () => {
       try {
-        const videoElement = document.getElementById('iptv-player');
-        if (videoElement) {
-          videoElement.pause();
-          videoElement.src = '';
-          videoElement.load();
+        if (videoPlayer.value) {
+          videoPlayer.value.pause()
+          videoPlayer.value.src = ''
+          videoPlayer.value.load()
         }
         
-        // 清理 HLS 实例
-        if (window.hls) {
-          window.hls.destroy();
-          window.hls = null;
-        }
-        
-        // 清理 mpegts 实例
-        if (window.mpegtsPlayer) {
-          window.mpegtsPlayer.destroy();
-          window.mpegtsPlayer = null;
-        }
+        cleanupPlayers()
         
         // 重置当前频道
-        currentChannel.value = null;
+        currentChannel.value = null
         
         // 返回主页面
-        selectedPlaylist.value = null;
+        selectedPlaylist.value = null
       } catch (error) {
-        console.error('返回时清理播放器失败:', error);
+        console.error('返回时清理播放器失败:', error)
+        showToast('返回失败: ' + error.message, 'error')
       }
-    };
+    }
     
     const toggleChannelList = () => {
       showChannelList.value = !showChannelList.value;
@@ -633,6 +482,197 @@ export default {
       )
     }
     
+    // 添加清理播放器的函数
+    const cleanupPlayers = async () => {
+      try {
+        if (window.hls) {
+          try {
+            window.hls.destroy()
+          } catch (e) {
+            console.error('HLS destroy error:', e)
+          }
+          window.hls = null
+        }
+        if (window.mpegtsPlayer) {
+          try {
+            window.mpegtsPlayer.destroy()
+          } catch (e) {
+            console.error('mpegts destroy error:', e)
+          }
+          window.mpegtsPlayer = null
+        }
+      } catch (error) {
+        console.error('清理播放器失败:', error)
+      }
+    }
+
+    // 添加 HLS 播放器初始化函数
+    const initHlsPlayer = async (videoElement, url) => {
+      return new Promise((resolve, reject) => {
+        try {
+          window.hls = new Hls({
+            debug: false,
+            enableWorker: true,
+            lowLatencyMode: true,
+            maxBufferLength: 10,
+            maxMaxBufferLength: 30,
+            backBufferLength: 30,
+            fragLoadingTimeOut: 10000,
+            manifestLoadingTimeOut: 10000,
+            levelLoadingTimeOut: 10000,
+            manifestLoadingMaxRetry: 2,
+            levelLoadingMaxRetry: 2,
+            fragLoadingMaxRetry: 2,
+            startLevel: -1,
+            abrEwmaDefaultEstimate: 500000,
+            progressive: true,
+            testBandwidth: true
+          })
+
+          window.hls.loadSource(url)
+          window.hls.attachMedia(videoElement)
+
+          window.hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+            console.log('HLS Media attached')
+            videoElement.volume = 1
+          })
+
+          window.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            console.log('HLS Manifest parsed')
+            videoElement.play()
+              .then(() => resolve())
+              .catch(error => {
+                console.log('自动播放失败，尝试静音播放:', error)
+                videoElement.muted = true
+                videoElement.play()
+                  .then(() => resolve())
+                  .catch(reject)
+              })
+          })
+
+          window.hls.on(Hls.Events.ERROR, (event, data) => {
+            if (data.fatal) {
+              reject(new Error('HLS 播放失败'))
+            }
+          })
+        } catch (error) {
+          reject(error)
+        }
+      })
+    }
+
+    // 添加 mpegts 播放器初始化函数
+    const initMpegtsPlayer = async (videoElement, url) => {
+      return new Promise((resolve, reject) => {
+        try {
+          if (!mpegts.getFeatureList().mseLivePlayback) {
+            reject(new Error('您的浏览器不支持播放此视频格式'))
+            return
+          }
+
+          window.mpegtsPlayer = mpegts.createPlayer({
+            type: 'mse',
+            url: url,
+            isLive: true,
+            enableStashBuffer: false,
+            stashInitialSize: 128,
+            cors: true,
+            withCredentials: false,
+            liveBufferLatencyChasing: true,
+            autoCleanupSourceBuffer: true
+          })
+
+          window.mpegtsPlayer.attachMediaElement(videoElement)
+          window.mpegtsPlayer.load()
+
+          videoElement.volume = 1
+          window.mpegtsPlayer.play()
+            .then(() => resolve())
+            .catch(error => {
+              console.log('mpegts 自动播放失败，尝试静音播放:', error)
+              videoElement.muted = true
+              window.mpegtsPlayer.play()
+                .then(() => resolve())
+                .catch(reject)
+            })
+
+          window.mpegtsPlayer.on(mpegts.Events.ERROR, (error) => {
+            reject(new Error('播放失败: ' + error.message))
+          })
+        } catch (error) {
+          reject(error)
+        }
+      })
+    }
+
+    // 添加预连接函数
+    const preconnectToServer = (url) => {
+      try {
+        const link = document.createElement('link')
+        link.rel = 'preconnect'
+        const urlObj = new URL(url)
+        link.href = `${urlObj.protocol}//${urlObj.hostname}`
+        document.head.appendChild(link)
+      } catch (error) {
+        console.error('Preconnect failed:', error)
+      }
+    }
+
+    const parseM3UContent = (content, baseUrl) => {
+      try {
+        const lines = content.split('\n')
+        const channels = []
+        let currentChannel = null
+
+        for (let line of lines) {
+          line = line.trim()
+          if (!line) continue
+          
+          if (line.startsWith('#EXTINF:')) {
+            // 解析频道信息
+            const titleMatch = line.match(/,(.+)$/)
+            const tvgNameMatch = line.match(/tvg-name="([^"]+)"/)
+            const tvgLogoMatch = line.match(/tvg-logo="([^"]+)"/)
+            const groupMatch = line.match(/group-title="([^"]+)"/)
+            
+            currentChannel = {
+              id: String(channels.length + 1),
+              name: tvgNameMatch ? tvgNameMatch[1] : (titleMatch ? titleMatch[1].trim() : `Channel ${channels.length + 1}`),
+              logo: tvgLogoMatch ? tvgLogoMatch[1] : '',
+              group: groupMatch ? groupMatch[1] : '未分类',
+              url: ''
+            }
+          } else if (line && !line.startsWith('#') && currentChannel) {
+            try {
+              // 处理相对和绝对 URL
+              currentChannel.url = line.startsWith('http') ? line : new URL(line, baseUrl).href
+              channels.push({ ...currentChannel })
+              currentChannel = null
+            } catch (error) {
+              console.error('解析频道 URL 失败:', error)
+              // 继续处理下一个频道
+              currentChannel = null
+            }
+          }
+        }
+
+        // 对频道进行排序和分组
+        channels.sort((a, b) => {
+          // 首先按分组排序
+          if (a.group !== b.group) {
+            return a.group.localeCompare(b.group)
+          }
+          // 然后按名称排序
+          return a.name.localeCompare(b.name)
+        })
+
+        return channels
+      } catch (error) {
+        console.error('解析播放列表失败:', error)
+        throw new Error('解析播放列表失败: ' + error.message)
+      }
+    }
+
     return {
       searchText,
       filteredPlaylists,
@@ -643,7 +683,6 @@ export default {
       playChannel,
       addPlaylist,
       showAddPlaylistDialog,
-      addTestPlaylist,
       showDeleteConfirm,
       playlistToDelete,
       confirmDelete,
@@ -659,7 +698,13 @@ export default {
       toggleDevTools,
       channelSearchText,
       filteredChannels,
-      filterChannels
+      filterChannels,
+      videoPlayer,
+      cleanupPlayers,
+      initHlsPlayer,
+      initMpegtsPlayer,
+      preconnectToServer,
+      parseM3UContent
     }
   }
 }
