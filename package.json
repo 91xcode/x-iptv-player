@@ -9,16 +9,46 @@
     "build": "vite build",
     "dev": "vite",
     "preview": "vite preview",
-    "electron:dev": "cross-env NODE_ENV=development concurrently \"vite\" \"electron .\""
+    "electron:dev": "cross-env NODE_ENV=development concurrently \"vite\" \"electron .\"",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
   },
   "build": {
     "appId": "com.iptv.player",
+    "productName": "IPTV Player",
+    "directories": {
+      "output": "release"
+    },
     "mac": {
       "category": "public.app-category.video",
-      "target": [
-        "dmg"
-      ]
-    }
+      "target": ["dmg"],
+      "icon": "build/icon.icns",
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "files": [
+      "dist/**/*",
+      "main.js",
+      "preload.js",
+      "node_modules/**/*"
+    ]
   },
   "dependencies": {
     "electron-store": "^8.1.0",

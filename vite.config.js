@@ -4,7 +4,7 @@ import { join } from 'path'
 
 export default defineConfig({
   plugins: [vue()],
-  base: process.env.ELECTRON == "true" ? './' : ".",
+  base: './',
   server: {
     port: 3000,
     strictPort: true,
@@ -19,12 +19,11 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    assetsDir: '.',
+    assetsDir: 'assets',
+    emptyOutDir: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['vue', 'video.js']
-        }
+        manualChunks: undefined
       }
     }
   },

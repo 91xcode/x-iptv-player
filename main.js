@@ -4,8 +4,10 @@ const Store = require('electron-store')
 const fetch = require('node-fetch')
 const http = require('http');
 const https = require('https');
+const fs = require('fs')
 
 const store = new Store()
+const logPath = path.join(app.getPath('userData'), 'app.log')
 
 // 确保开发者工具默认是关闭的
 if (!store.has('devToolsEnabled')) {
@@ -15,6 +17,13 @@ if (!store.has('devToolsEnabled')) {
 let mainWindow;
 let logHistory = []
 const MAX_LOG_HISTORY = 1000
+
+// 添加文件日志函数
+function logToFile(message) {
+  const timestamp = new Date().toISOString()
+  const logMessage = `${timestamp} - ${message}\n`
+  fs.appendFileSync(logPath, logMessage)
+}
 
 // 在创建窗口之前设置控制台输出捕获
 const setupConsoleCapture = (win) => {
@@ -39,6 +48,9 @@ const setupConsoleCapture = (win) => {
           }
           return String(arg)
         }).join(' ')
+
+        // 添加文件日志
+        logToFile(`${type}: ${terminalOutput}`)
 
         // 根据类型输出到终端
         switch (type) {
@@ -71,6 +83,7 @@ const setupConsoleCapture = (win) => {
         }
       } catch (error) {
         originalConsoleError.apply(console, ['Log handling error:', error])
+        logToFile(`Error handling log: ${error}`)
       }
     }
 
@@ -96,6 +109,7 @@ const setupConsoleCapture = (win) => {
 
   } catch (error) {
     console.error('Failed to setup console capture:', error)
+    logToFile(`Failed to setup console capture: ${error}`)
   }
 }
 
@@ -156,7 +170,30 @@ function createWindow() {
     }
     loadURL()
   } else {
-    mainWindow.loadFile('dist/index.html')
+    const indexPath = path.join(__dirname, 'dist', 'index.html')
+    console.log('Loading index file from:', indexPath)
+    logToFile(`Attempting to load index file from: ${indexPath}`)
+    logToFile(`__dirname is: ${__dirname}`)
+    logToFile(`File exists: ${fs.existsSync(indexPath)}`)
+    
+    // 添加文件内容检查
+    if (fs.existsSync(indexPath)) {
+      logToFile(`Index file contents: ${fs.readFileSync(indexPath, 'utf8').slice(0, 500)}...`)
+    }
+
+    mainWindow.loadFile(indexPath).catch(error => {
+      console.error('Failed to load index.html:', error)
+      logToFile(`Failed to load index.html: ${error}`)
+    })
+
+    mainWindow.webContents.openDevTools()
+
+    // 添加更多错误处理
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      const error = `Page failed to load: ${errorCode} - ${errorDescription}`
+      console.error(error)
+      logToFile(error)
+    })
   }
 
   // 其他事件监听器
