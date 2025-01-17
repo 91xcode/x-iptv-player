@@ -26,7 +26,7 @@
     "mac": {
       "category": "public.app-category.video",
       "target": ["dmg"],
-      "icon": "build/icon.icns",
+      "icon": "./src/assets/electron.icns",
       "darkModeSupport": true
     },
     "dmg": {
@@ -51,7 +51,8 @@
       "dist/**/*",
       "main.js",
       "preload.js",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "!src/assets/electron.icns"
     ]
   },
   "dependencies": {

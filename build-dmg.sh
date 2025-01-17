@@ -39,7 +39,9 @@ check_requirements() {
 # 清理旧的构建文件
 cleanup() {
     info "清理旧的构建文件..."
-    rm -rf dist dist_electron
+    rm -rf dist dist_electron release
+    rm -rf ~/Library/Caches/electron-builder
+    rm -rf ~/.electron-gyp
 }
 
 # 安装依赖

@@ -27,3 +27,10 @@ npm install
 
 # 构建和打包
 npm run dist
+
+
+
+几点注意事项：
+1. .icns 文件必须是有效的 macOS 图标格式
+图标文件通常需要包含多个尺寸（16x16, 32x32, 128x128, 256x256, 512x512 等）
+如果您还没有 .icns 文件，可以使用 IconSet Creator 或 Image2icon 等工具将 PNG 转换为 .icns
