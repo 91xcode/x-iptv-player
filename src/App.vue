@@ -34,8 +34,8 @@
               <div class="playlist-cloud-icon">☁️</div>
             </div>
             <div class="playlist-actions">
-              <button class="edit-btn" @click.stop="showEditDialog(playlist)">✏️</button>
-              <button class="delete-btn" @click.stop="confirmDelete(playlist)">🗑️</button>
+              <button class="edit-btn" @click.stop="showEditPlaylistDialog(playlist)" title="编辑播放源">✏️</button>
+              <button class="delete-btn" @click.stop="confirmDelete(playlist)" title="删除播放源">🗑️</button>
             </div>
           </div>
 
@@ -86,8 +86,12 @@
         <div class="player-content">
           <!-- 左侧频道列表 -->
           <div class="channel-list" :class="{ 'channel-list-hidden': !showChannelList }">
+            <div class="channel-list-header">
+              <h3>频道列表</h3>
+              <span class="channel-count">{{ filteredChannels.length }} 个频道</span>
+            </div>
             <div class="channel-items">
-              <div v-for="channel in filteredChannels" 
+              <div v-for="channel in filteredChannels"
                    :key="channel.id"
                    class="channel-item"
                    :class="{ active: currentChannel?.id === channel.id }"
@@ -126,6 +130,12 @@
 
     <!-- 对话框 -->
     <AddPlaylistDialog v-if="showDialog" @close="showDialog = false" @add="addPlaylist" />
+    <EditPlaylistDialog
+      v-if="showEditPlaylistDialogFlag"
+      :playlist="editingPlaylistData"
+      @close="closeEditPlaylistDialog"
+      @save="savePlaylistChanges"
+    />
     <div v-if="showDeleteConfirm" class="dialog-overlay">
       <div class="dialog-content">
         <h3>确认删除</h3>
@@ -207,10 +217,12 @@ import Hls from 'hls.js'
 import mpegts from 'mpegts.js'
 import { Parser } from 'm3u8-parser'
 import AddPlaylistDialog from './components/AddPlaylistDialog.vue'
+import EditPlaylistDialog from './components/EditPlaylistDialog.vue'
 
 export default {
   components: {
-    AddPlaylistDialog
+    AddPlaylistDialog,
+    EditPlaylistDialog
   },
   
   setup() {
@@ -254,6 +266,29 @@ export default {
     
     onMounted(async () => {
       try {
+        // 检查是否在Electron环境中
+        if (!window.electronAPI) {
+          console.warn('Not running in Electron environment, using mock data')
+          // 在浏览器环境中使用模拟数据
+          playlists.value = [
+            {
+              id: '1',
+              name: '示例播放列表',
+              url: 'https://example.com/playlist.m3u8',
+              channels: [
+                { id: '1', name: '示例频道1', url: 'https://example.com/channel1.m3u8' },
+                { id: '2', name: '示例频道2', url: 'https://example.com/channel2.m3u8' }
+              ],
+              type: 'remote',
+              addedAt: new Date().toISOString()
+            }
+          ]
+          filteredPlaylists.value = playlists.value
+          devToolsEnabled.value = false
+          showToast('浏览器模式：请使用 npm run electron:dev 启动完整功能', 'info')
+          return
+        }
+
         playlists.value = await window.electronAPI.getPlaylists()
         filteredPlaylists.value = playlists.value
         devToolsEnabled.value = false
@@ -650,8 +685,8 @@ export default {
               level: data.level,
               height: window.hls.levels[data.level]?.height,
               bitrate: Math.round(window.hls.levels[data.level]?.bitrate / 1024) + 'kbps'
-            }
-            console.log('清晰度切换:', JSON.stringify(switchInfo, null, 2))
+            };
+            console.log('清晰度切换:', JSON.stringify(switchInfo, null, 2));
           })
 
           window.hls.on(Hls.Events.ERROR, (event, data) => {
@@ -664,7 +699,7 @@ export default {
                 code: data.response.code,
                 text: data.response.text
               } : null
-            }
+            };
             
             let errorDescription = '未知错误';
             switch (data.details) {
@@ -979,10 +1014,122 @@ export default {
     const editingName = ref('')
     const editingPlaylist = ref(null)
 
+    // 添加编辑播放源对话框状态
+    const showEditPlaylistDialogFlag = ref(false)
+    const editingPlaylistData = ref(null)
+
     const showEditDialog = (playlist) => {
       editingPlaylist.value = playlist
       editingName.value = playlist.name
       showEditNameDialog.value = true
+    }
+
+    // 添加编辑播放源的方法
+    const showEditPlaylistDialog = (playlist) => {
+      editingPlaylistData.value = playlist
+      showEditPlaylistDialogFlag.value = true
+    }
+
+    const closeEditPlaylistDialog = () => {
+      showEditPlaylistDialogFlag.value = false
+      editingPlaylistData.value = null
+    }
+
+    const savePlaylistChanges = async (changes) => {
+      try {
+        if (!changes.name.trim() || !changes.url.trim()) {
+          showToast('名称和地址不能为空', 'error')
+          return
+        }
+
+        // 检查名称是否重复（排除当前编辑的播放列表）
+        const isDuplicateName = playlists.value.some(p =>
+          p.id !== changes.id && p.name === changes.name.trim()
+        )
+
+        if (isDuplicateName) {
+          showToast('该名称已存在', 'error')
+          return
+        }
+
+        // 检查URL是否重复（排除当前编辑的播放列表）
+        const isDuplicateUrl = playlists.value.some(p =>
+          p.id !== changes.id && p.url === changes.url.trim()
+        )
+
+        if (isDuplicateUrl) {
+          showToast('该地址已存在', 'error')
+          return
+        }
+
+        // 查找要编辑的播放列表
+        const index = playlists.value.findIndex(p => p.id === changes.id)
+        if (index === -1) {
+          showToast('播放列表不存在', 'error')
+          return
+        }
+
+        const oldPlaylist = playlists.value[index]
+
+        // 如果URL发生变化，需要重新获取播放列表内容
+        if (oldPlaylist.url !== changes.url.trim()) {
+          showToast('正在更新播放列表...', 'info')
+
+          try {
+            // 获取新的播放列表内容
+            const result = await window.electronAPI.fetchPlaylist(changes.url.trim())
+            if (result.error) {
+              throw new Error(result.error)
+            }
+
+            // 解析新的频道列表
+            const newChannels = parseM3UContent(result.content, changes.url.trim())
+            if (newChannels.length === 0) {
+              throw new Error('未找到有效的频道信息')
+            }
+
+            // 更新播放列表
+            playlists.value[index] = {
+              ...oldPlaylist,
+              name: changes.name.trim(),
+              url: changes.url.trim(),
+              channels: newChannels,
+              updatedAt: new Date().toISOString()
+            }
+          } catch (error) {
+            console.error('获取新播放列表失败:', error)
+            showToast('获取新播放列表失败: ' + error.message, 'error')
+            return
+          }
+        } else {
+          // 只更新名称
+          playlists.value[index] = {
+            ...oldPlaylist,
+            name: changes.name.trim(),
+            updatedAt: new Date().toISOString()
+          }
+        }
+
+        // 同步更新过滤后的列表
+        const filteredIndex = filteredPlaylists.value.findIndex(p => p.id === changes.id)
+        if (filteredIndex !== -1) {
+          filteredPlaylists.value[filteredIndex] = playlists.value[index]
+        }
+
+        // 如果当前正在播放这个列表，也要更新
+        if (selectedPlaylist.value?.id === changes.id) {
+          selectedPlaylist.value = playlists.value[index]
+        }
+
+        // 保存到存储
+        await window.electronAPI.savePlaylist(JSON.parse(JSON.stringify(playlists.value)))
+
+        showToast('播放源更新成功', 'success')
+        closeEditPlaylistDialog()
+      } catch (error) {
+        console.error('保存播放源失败:', error)
+        showToast('保存失败: ' + error.message, 'error')
+      }
     }
 
     const savePlaylistName = async () => {
@@ -1065,27 +1212,48 @@ export default {
       showEditNameDialog,
       editingName,
       showEditDialog,
-      savePlaylistName
+      savePlaylistName,
+      showEditPlaylistDialog,
+      showEditPlaylistDialogFlag,
+      editingPlaylistData,
+      closeEditPlaylistDialog,
+      savePlaylistChanges
     }
   }
 }
 </script>
 
 <style>
+/* Apple风格全局样式 */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
 .app-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background-color: #1a1a1a;
-  color: #fff;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  color: #1d1d1f;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
 .top-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 15px 20px;
-  background-color: #2a2a2a;
+  padding: 16px 24px;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .top-left {
@@ -1096,115 +1264,167 @@ export default {
 .top-right {
   display: flex;
   align-items: center;
+  gap: 12px;
 }
 
 .search-box {
   position: relative;
-  max-width: 300px;
+  max-width: 320px;
 }
 
 .search-box input {
-  background-color: #3a3a3a;
-  border: none;
-  padding: 8px 15px;
-  padding-left: 35px;
-  border-radius: 20px;
-  color: #fff;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  padding: 10px 16px;
+  padding-left: 40px;
+  border-radius: 12px;
+  color: #1d1d1f;
   width: 100%;
   font-size: 14px;
+  font-weight: 400;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.search-box input:focus {
+  outline: none;
+  border-color: #007aff;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+}
+
+.search-box input::placeholder {
+  color: #86868b;
 }
 
 .search-icon {
   position: absolute;
-  left: 10px;
+  left: 12px;
   top: 50%;
   transform: translateY(-50%);
-  color: #666;
-  font-size: 14px;
+  color: #86868b;
+  font-size: 16px;
 }
 
 .icon {
   cursor: pointer;
   font-size: 20px;
-  color: #fff;
-  transition: color 0.3s;
+  color: #1d1d1f;
+  transition: all 0.2s ease;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .icon:hover {
-  color: #4CAF50;
+  color: #007aff;
+  background: rgba(255, 255, 255, 0.9);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .playlists-container {
-  padding: 20px;
+  padding: 24px;
   flex: 1;
   overflow-y: auto;
 }
 
 .playlist-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 .playlist-card {
-  background-color: #2a2a2a;
-  border-radius: 10px;
-  padding: 20px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 16px;
+  padding: 24px;
   cursor: pointer;
   display: flex;
   justify-content: space-between;
-  transition: background-color 0.3s;
+  transition: all 0.3s ease;
   position: relative;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
 }
 
 .playlist-card:hover {
-  background-color: #3a3a3a;
+  transform: translateY(-4px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.95);
 }
 
 .playlist-info {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
+  flex: 1;
 }
 
 .playlist-name {
   font-size: 18px;
-  font-weight: bold;
+  font-weight: 600;
+  color: #1d1d1f;
+  line-height: 1.3;
 }
 
 .playlist-count {
-  color: #888;
+  color: #86868b;
   font-size: 14px;
+  font-weight: 400;
 }
 
 .playlist-type {
-  color: #666;
+  color: #86868b;
   font-size: 12px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .playlist-cloud-icon {
-  font-size: 24px;
-  opacity: 0.5;
+  font-size: 28px;
+  opacity: 0.6;
+  color: #007aff;
 }
 
 .add-card {
-  border: 2px dashed #3a3a3a;
-  background-color: transparent;
+  border: 2px dashed rgba(0, 122, 255, 0.3);
+  background: rgba(0, 122, 255, 0.05);
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.3s ease;
+}
+
+.add-card:hover {
+  border-color: rgba(0, 122, 255, 0.5);
+  background: rgba(0, 122, 255, 0.1);
+  transform: translateY(-2px);
 }
 
 .add-icon {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  color: #666;
+  gap: 12px;
+  color: #007aff;
 }
 
 .add-icon span {
-  font-size: 32px;
+  font-size: 36px;
+  font-weight: 300;
+}
+
+.add-text {
+  font-size: 16px;
+  font-weight: 500;
 }
 
 .content-area {
@@ -1248,61 +1468,9 @@ export default {
   color: #fff;
 }
 
-.channel-items {
-  flex: 1;
-  overflow-y: auto;
-  padding: 10px 0;
-}
+/* 旧的频道样式已移动到Apple风格样式部分 */
 
-.channel-item {
-  padding: 12px 15px;
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  transition: background-color 0.2s;
-  color: #aaa;
-}
-
-.channel-item:hover {
-  background-color: #3a3a3a;
-  color: #fff;
-}
-
-.channel-item.active {
-  background-color: #4a4a4a;
-  color: #fff;
-}
-
-.channel-number {
-  font-family: monospace;
-  color: #666;
-  margin-right: 10px;
-  font-size: 14px;
-  min-width: 40px;
-}
-
-.channel-name {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.player-area {
-  flex: 1;
-  background-color: #000;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-}
-
-.player-wrapper {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #000;
-}
+/* 旧的播放器样式已移动到下方的Apple风格样式中 */
 
 #iptv-player {
   width: 100%;
@@ -1326,22 +1494,74 @@ export default {
   font-weight: bold;
 }
 
-/* 自定义滚动条样式 */
+/* Apple风格滚动条样式 */
 .channel-items::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
 }
 
 .channel-items::-webkit-scrollbar-track {
-  background: #2a2a2a;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  margin: 8px 0;
 }
 
 .channel-items::-webkit-scrollbar-thumb {
-  background: #4a4a4a;
-  border-radius: 3px;
+  background: rgba(0, 122, 255, 0.6);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .channel-items::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: rgba(0, 122, 255, 0.8);
+  box-shadow: 0 2px 6px rgba(0, 122, 255, 0.3);
+}
+
+.channel-items::-webkit-scrollbar-thumb:active {
+  background: #007aff;
+}
+
+/* 滚动时显示更明显的指示 */
+.channel-items {
+  scroll-behavior: smooth;
+}
+
+.channel-items:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 122, 255, 0.8);
+}
+
+/* 为频道列表添加渐变遮罩，显示滚动状态 */
+.channel-list::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 20px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.8), transparent);
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.channel-list::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 20px;
+  background: linear-gradient(to top, rgba(255, 255, 255, 0.8), transparent);
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.channel-list:hover::before,
+.channel-list:hover::after {
+  opacity: 1;
 }
 
 .playlist-content {
@@ -1352,79 +1572,143 @@ export default {
 
 .playlist-actions {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: 16px;
+  right: 16px;
   opacity: 0;
-  transition: opacity 0.3s;
+  transition: all 0.3s ease;
+  display: flex;
+  gap: 8px;
 }
 
 .playlist-card:hover .playlist-actions {
   opacity: 1;
 }
 
-.delete-btn {
-  background: none;
-  border: none;
-  color: #ff4444;
+.edit-btn, .delete-btn {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.1);
   cursor: pointer;
-  padding: 5px;
-  font-size: 18px;
-  opacity: 0.7;
-  transition: opacity 0.3s;
+  padding: 6px;
+  font-size: 16px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-.delete-btn:hover {
-  opacity: 1;
+.edit-btn {
+  color: #007aff;
 }
 
-/* 删除确认对话框样式 */
+.delete-btn {
+  color: #ff3b30;
+}
+
+.edit-btn:hover, .delete-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 1);
+}
+
+/* Apple风格对话框样式 */
 .dialog-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 3000;
+  animation: fadeIn 0.3s ease;
 }
 
 .dialog-content {
-  background: #2a2a2a;
-  padding: 25px;
-  border-radius: 10px;
-  width: 400px;
-  color: #fff;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  padding: 32px;
+  border-radius: 20px;
+  width: 420px;
+  color: #1d1d1f;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  animation: slideUp 0.3s ease;
+}
+
+.dialog-content h3 {
+  margin: 0 0 16px 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #1d1d1f;
 }
 
 .dialog-content p {
-  margin: 20px 0;
-  color: #ddd;
+  margin: 16px 0;
+  color: #86868b;
+  font-size: 16px;
+  line-height: 1.5;
 }
 
 .dialog-buttons {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 12px;
+  margin-top: 24px;
 }
 
 .dialog-buttons button {
-  padding: 8px 16px;
-  border-radius: 4px;
+  padding: 12px 24px;
+  border-radius: 12px;
   border: none;
   cursor: pointer;
+  font-size: 16px;
+  font-weight: 500;
+  transition: all 0.2s ease;
 }
 
 .dialog-buttons .cancel-btn {
-  background: #666;
+  background: rgba(142, 142, 147, 0.12);
+  color: #007aff;
+}
+
+.dialog-buttons .cancel-btn:hover {
+  background: rgba(142, 142, 147, 0.2);
+}
+
+.dialog-buttons .delete-btn, .dialog-buttons .save-btn {
+  background: #007aff;
   color: white;
 }
 
 .dialog-buttons .delete-btn {
-  background: #ff4444;
-  color: white;
+  background: #ff3b30;
+}
+
+.dialog-buttons .delete-btn:hover, .dialog-buttons .save-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* 视频播放器样式 */
@@ -1477,32 +1761,38 @@ export default {
   text-align: center;
 }
 
-/* 添加新的播放页面样式 */
+/* Apple风格播放页面样式 */
 .player-page {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background-color: #1a1a1a;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
 .player-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 20px;
-  background: #1a1a1a;
+  padding: 16px 24px;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 16px;
+  flex: 1;
 }
 
 .header-right {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
 }
 
 .channel-search {
@@ -1510,87 +1800,137 @@ export default {
 }
 
 .channel-search input {
-  background: #2a2a2a;
-  border: none;
-  border-radius: 4px;
-  padding: 8px 12px;
-  color: #fff;
-  width: 200px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  padding: 10px 16px;
+  color: #1d1d1f;
+  width: 220px;
   font-size: 14px;
+  font-weight: 400;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.channel-search input:focus {
+  outline: none;
+  border-color: #007aff;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
 }
 
 .channel-search input::placeholder {
-  color: #666;
+  color: #86868b;
 }
 
 .player-icons {
   display: flex;
-  gap: 15px;
+  gap: 12px;
 }
 
 .player-icons .icon {
   cursor: pointer;
   font-size: 18px;
-  color: #fff;
-  transition: color 0.3s;
+  color: #1d1d1f;
+  transition: all 0.2s ease;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .player-icons .icon:hover {
-  color: #4CAF50;
+  background: rgba(255, 255, 255, 0.9);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  color: #007aff;
 }
 
 .back-button {
   display: flex;
   align-items: center;
-  background: none;
-  border: none;
-  color: #fff;
-  font-size: 16px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  color: #1d1d1f;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  padding: 8px 15px;
-  border-radius: 4px;
-  margin-right: 20px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .back-button:hover {
-  background-color: #3a3a3a;
+  background: rgba(255, 255, 255, 0.9);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  color: #007aff;
 }
 
 .back-icon {
   margin-right: 8px;
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .playlist-title {
   margin: 0;
-  font-size: 18px;
-  color: #fff;
+  font-size: 20px;
+  font-weight: 600;
+  color: #1d1d1f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
 }
 
 .player-content {
   display: flex;
   flex: 1;
   overflow: hidden;
+  gap: 0;
+  padding: 8px;
 }
 
 .channel-list {
-  width: 300px;
-  background-color: #2a2a2a;
-  border-right: 1px solid #3a3a3a;
-  overflow-y: auto;
+  width: 280px;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-right: 1px solid rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+  border-radius: 16px 0 0 16px;
+  margin: 8px 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .player-area {
   flex: 1;
-  background-color: #000;
+  background: #000;
+  border-radius: 0 16px 16px 0;
+  overflow: hidden;
+  margin: 8px 8px 8px 0;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
 }
 
-/* 调整频道列表样式 */
+/* Apple风格频道列表样式 */
 .channel-items {
-  padding: 10px 0;
+  padding: 16px 0 20px 0;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .channel-item {
@@ -1598,25 +1938,50 @@ export default {
   display: flex;
   align-items: center;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease;
+  margin: 2px 12px;
+  border-radius: 12px;
+  color: #1d1d1f;
 }
 
 .channel-item:hover {
-  background-color: #3a3a3a;
+  background: rgba(0, 122, 255, 0.15);
+  transform: translateX(4px);
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.2);
+  color: #007aff;
 }
 
 .channel-item.active {
-  background-color: #4a4a4a;
+  background: #007aff;
+  color: #fff;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
 }
 
 .channel-number {
-  color: #666;
-  margin-right: 15px;
-  font-family: monospace;
+  color: #86868b;
+  margin-right: 16px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 40px;
+}
+
+.channel-item.active .channel-number {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.channel-item:hover .channel-number {
+  color: rgba(0, 122, 255, 0.8);
 }
 
 .channel-name {
-  color: #fff;
+  color: inherit;
+  font-weight: inherit;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .video-js {
@@ -1751,38 +2116,45 @@ export default {
   display: none;
 }
 
-/* 添加 Toast 样式 */
+/* Apple风格Toast样式 */
 .toast {
   position: fixed;
-  top: 20px;
-  right: 20px;
-  padding: 12px 20px;
-  border-radius: 4px;
+  top: 24px;
+  right: 24px;
+  padding: 16px 24px;
+  border-radius: 12px;
   color: #fff;
   z-index: 9999;
-  animation: fadeIn 0.3s ease;
+  animation: toastSlideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  font-weight: 500;
+  font-size: 14px;
+  max-width: 320px;
 }
 
 .toast-success {
-  background-color: #4caf50;
+  background: rgba(52, 199, 89, 0.9);
 }
 
 .toast-error {
-  background-color: #f44336;
+  background: rgba(255, 59, 48, 0.9);
 }
 
 .toast-info {
-  background-color: #2196f3;
+  background: rgba(0, 122, 255, 0.9);
 }
 
-@keyframes fadeIn {
+@keyframes toastSlideIn {
   from {
     opacity: 0;
-    transform: translateY(-10px);
+    transform: translateX(100%) scale(0.9);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(0) scale(1);
   }
 }
 
@@ -1807,29 +2179,31 @@ export default {
   background: rgba(0, 0, 0, 0.9);
 }
 
-.video-player {
-  width: 100%;
-  height: 100%;
-  background: #000;
-}
+/* 旧的video-player样式已移动到下方的Apple风格样式中 */
 
-/* 添加新的样式 */
+/* Apple风格切换按钮 */
 .toggle-list-button {
   display: flex;
   align-items: center;
-  background: none;
-  border: none;
-  color: #fff;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  color: #1d1d1f;
   font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  padding: 8px 15px;
-  border-radius: 4px;
-  margin-right: 20px;
-  transition: background-color 0.3s;
+  padding: 10px 16px;
+  border-radius: 12px;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .toggle-list-button:hover {
-  background-color: #3a3a3a;
+  background: rgba(255, 255, 255, 0.9);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  color: #007aff;
 }
 
 .toggle-icon {
@@ -1838,13 +2212,13 @@ export default {
 }
 
 .channel-list {
-  width: 300px;
-  transition: transform 0.3s ease, width 0.3s ease;
+  transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94), width 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 .channel-list-hidden {
   transform: translateX(-100%);
   width: 0;
+  margin: 0;
 }
 
 .player-content {
@@ -1852,54 +2226,74 @@ export default {
   overflow: hidden;
 }
 
-/* 设置菜单样式 */
+/* 当频道列表隐藏时，播放器区域占据全部空间 */
+.player-content:has(.channel-list-hidden) .player-area {
+  margin: 8px;
+  border-radius: 16px;
+}
+
+/* 兼容性备选方案 */
+.channel-list-hidden + .player-area {
+  margin: 8px;
+  border-radius: 16px;
+}
+
+/* Apple风格设置菜单 */
 .settings-menu {
   position: absolute;
-  top: 60px;
-  right: 20px;
-  background: #2a2a2a;
-  border-radius: 8px;
-  padding: 10px 0;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  top: 70px;
+  right: 24px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 16px;
+  padding: 8px 0;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(0, 0, 0, 0.1);
   z-index: 1000;
+  min-width: 200px;
+  animation: menuSlideIn 0.3s ease;
 }
 
 .settings-item {
-  padding: 10px 20px;
+  padding: 12px 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease;
+  color: #1d1d1f;
+  font-weight: 500;
 }
 
 .settings-item:hover {
-  background-color: #3a3a3a;
+  background: rgba(0, 122, 255, 0.1);
 }
 
 .toggle-switch {
-  width: 40px;
-  height: 20px;
-  background-color: #666;
-  border-radius: 10px;
+  width: 44px;
+  height: 24px;
+  background-color: #e5e5ea;
+  border-radius: 12px;
   position: relative;
-  transition: background-color 0.3s;
+  transition: all 0.3s ease;
 }
 
 .toggle-switch::before {
   content: '';
   position: absolute;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   background-color: white;
   border-radius: 50%;
   top: 2px;
   left: 2px;
-  transition: transform 0.3s;
+  transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .toggle-switch.active {
-  background-color: #4CAF50;
+  background-color: #34c759;
 }
 
 .toggle-switch.active::before {
@@ -1908,6 +2302,84 @@ export default {
 
 .settings-icon {
   cursor: pointer;
+}
+
+@keyframes menuSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Apple风格视频播放器样式 */
+.video-player {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  background: #000;
+  border: none;
+}
+
+.player-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: #000;
+}
+
+/* Apple风格频道列表标题 */
+.channel-list-header {
+  padding: 20px 20px 16px 20px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.channel-list-header h3 {
+  margin: 0 0 4px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.channel-count {
+  font-size: 14px;
+  color: #86868b;
+  font-weight: 500;
+}
+
+/* 滚动条样式 */
+.channel-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.channel-list::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  margin: 8px 0;
+}
+
+.channel-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 122, 255, 0.6);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.channel-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 122, 255, 0.8);
+  box-shadow: 0 2px 6px rgba(0, 122, 255, 0.3);
+}
+
+.channel-list::-webkit-scrollbar-thumb:active {
+  background: #007aff;
 }
 
 /* 添加日志面板样式 */
