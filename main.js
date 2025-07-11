@@ -155,9 +155,11 @@ function createWindow() {
 
   // 最后加载页面
   if (process.env.NODE_ENV === 'development') {
+    const port = process.env.VITE_PORT || 3000
     const loadURL = async () => {
       try {
-        await mainWindow.loadURL('http://localhost:3000')
+        console.log(`Attempting to load URL: http://localhost:${port}`)
+        await mainWindow.loadURL(`http://localhost:${port}`)
         const devToolsEnabled = store.get('devToolsEnabled', false);
         if (!devToolsEnabled && mainWindow.webContents.isDevToolsOpened()) {
           mainWindow.webContents.closeDevTools();

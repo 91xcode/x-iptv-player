@@ -31,11 +31,24 @@
                 <div class="playlist-count">{{ playlist.channels.length }} 个频道</div>
                 <div class="playlist-type">M3U Playlist</div>
               </div>
-              <div class="playlist-cloud-icon">☁️</div>
             </div>
             <div class="playlist-actions">
-              <button class="edit-btn" @click.stop="showEditPlaylistDialog(playlist)" title="编辑播放源">✏️</button>
-              <button class="delete-btn" @click.stop="confirmDelete(playlist)" title="删除播放源">🗑️</button>
+              <button class="edit-btn" @click.stop="showEditPlaylistDialog(playlist)" title="编辑播放源">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <button class="delete-btn" @click.stop="confirmDelete(playlist)" title="删除播放源">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="m3 6 3 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="m8 6 0 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="m13 6 8 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="m10 11 0 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="m14 11 0 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </button>
             </div>
           </div>
 
@@ -89,15 +102,24 @@
             <div class="channel-list-header">
               <h3>频道列表</h3>
               <span class="channel-count">{{ filteredChannels.length }} 个频道</span>
+              <!-- 滚动进度指示器 -->
+              <div v-if="filteredChannels.length > visibleCount" class="scroll-indicator">
+                <div class="scroll-progress" :style="{ height: scrollProgress + '%' }"></div>
+              </div>
             </div>
-            <div class="channel-items">
-              <div v-for="channel in filteredChannels"
-                   :key="channel.id"
-                   class="channel-item"
-                   :class="{ active: currentChannel?.id === channel.id }"
-                   @click="playChannel(channel)">
-                <span class="channel-number">{{ channel.id.padStart(3, '0') }}</span>
-                <span class="channel-name">{{ channel.name }}</span>
+            <div class="channel-items" ref="channelContainer" @scroll="handleChannelScroll">
+              <!-- 虚拟滚动容器 -->
+              <div class="virtual-scroll-container" :style="{ height: virtualScrollHeight + 'px' }">
+                <div class="virtual-scroll-content" :style="{ transform: `translateY(${virtualScrollOffset}px)` }">
+                  <div v-for="channel in visibleChannels"
+                       :key="channel.id"
+                       class="channel-item"
+                       :class="{ active: currentChannel?.id === channel.id }"
+                       @click="playChannel(channel)">
+                    <span class="channel-number">{{ channel.id.padStart(3, '0') }}</span>
+                    <span class="channel-name">{{ channel.name }}</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -181,6 +203,10 @@
         <span>显示日志</span>
         <span class="toggle-switch" :class="{ active: showLogs }"></span>
       </div>
+      <div class="settings-item" @click="cleanupDuplicates">
+        <span>清理重复播放源</span>
+        <span class="action-icon">🧹</span>
+      </div>
     </div>
 
     <!-- 添加日志查看面板 -->
@@ -244,7 +270,20 @@ export default {
     const devToolsEnabled = ref(false)
     const channelSearchText = ref('')
     const filteredChannels = ref([])
-    
+
+    // 虚拟滚动相关
+    const channelContainer = ref(null)
+    const itemHeight = 60 // 每个频道项的高度
+    const visibleCount = 25 // 增加可见的频道数量
+    const bufferCount = 10 // 增加缓冲区频道数量
+    const scrollTop = ref(0)
+    const visibleChannels = ref([])
+    const virtualScrollHeight = ref(0)
+    const virtualScrollOffset = ref(0)
+    const isScrolling = ref(false)
+    const scrollTimer = ref(null)
+    const scrollProgress = ref(0)
+
     // 添加播放器相关的状态
     const videoPlayer = ref(null)
     
@@ -289,8 +328,31 @@ export default {
           return
         }
 
-        playlists.value = await window.electronAPI.getPlaylists()
-        filteredPlaylists.value = playlists.value
+        const loadedPlaylists = await window.electronAPI.getPlaylists()
+        console.log('加载的播放列表:', loadedPlaylists)
+
+        // 清理重复的播放列表（基于URL去重）
+        const uniquePlaylists = []
+        const seenUrls = new Set()
+
+        for (const playlist of loadedPlaylists) {
+          if (!seenUrls.has(playlist.url)) {
+            seenUrls.add(playlist.url)
+            uniquePlaylists.push(playlist)
+          } else {
+            console.log('发现重复播放源，已跳过:', playlist.name, playlist.url)
+          }
+        }
+
+        // 如果清理了重复项，保存清理后的数据
+        if (uniquePlaylists.length !== loadedPlaylists.length) {
+          console.log(`清理了 ${loadedPlaylists.length - uniquePlaylists.length} 个重复播放源`)
+          await window.electronAPI.savePlaylist(uniquePlaylists)
+          showToast(`清理了 ${loadedPlaylists.length - uniquePlaylists.length} 个重复播放源`, 'info')
+        }
+
+        playlists.value = uniquePlaylists
+        filteredPlaylists.value = uniquePlaylists
         devToolsEnabled.value = false
         await window.electronAPI.toggleDevTools(false)
       } catch (error) {
@@ -371,10 +433,16 @@ export default {
             type: 'single'
           }
           
-          // 检查是否已存在相同URL的播放列表，但只提示不阻止
+          // 检查是否已存在相同URL的播放列表，如果存在则阻止添加
+          console.log('检查单个播放源重复:', newPlaylist.url)
+          console.log('当前播放列表:', playlists.value.map(p => ({ name: p.name, url: p.url })))
+
           const existingPlaylist = playlists.value.find(p => p.url === newPlaylist.url)
           if (existingPlaylist) {
-            showToast(`注意：该播放源已存在于列表"${existingPlaylist.name}"中`, 'info')
+            console.log('找到重复的单个播放源:', existingPlaylist)
+            showToast(`该播放源已存在：${existingPlaylist.name}`, 'error')
+            showDialog.value = false
+            return
           }
           
           // 生成唯一名称
@@ -401,10 +469,16 @@ export default {
         let content
         console.log('开始添加播放列表:', url)
         
-        // 检查是否已存在相同URL的播放列表，但只提示不阻止
+        // 检查是否已存在相同URL的播放列表，如果存在则阻止添加
+        console.log('检查重复播放源:', url)
+        console.log('当前播放列表:', playlists.value.map(p => ({ name: p.name, url: p.url })))
+
         const existingPlaylist = playlists.value.find(p => p.url === url)
         if (existingPlaylist) {
-          showToast(`注意：该地址已存在于列表"${existingPlaylist.name}"中`, 'info')
+          console.log('找到重复播放源:', existingPlaylist)
+          showToast(`该播放源已存在：${existingPlaylist.name}`, 'error')
+          showDialog.value = false
+          return
         }
         
         if (localContent) {
@@ -560,6 +634,34 @@ export default {
         devToolsEnabled.value = !devToolsEnabled.value;
       }
     }
+
+    // 手动清理重复播放源
+    const cleanupDuplicates = async () => {
+      try {
+        const originalCount = playlists.value.length
+        const uniquePlaylists = []
+        const seenUrls = new Set()
+
+        for (const playlist of playlists.value) {
+          if (!seenUrls.has(playlist.url)) {
+            seenUrls.add(playlist.url)
+            uniquePlaylists.push(playlist)
+          }
+        }
+
+        if (uniquePlaylists.length !== originalCount) {
+          playlists.value = uniquePlaylists
+          filteredPlaylists.value = uniquePlaylists
+          await window.electronAPI.savePlaylist(uniquePlaylists)
+          showToast(`清理了 ${originalCount - uniquePlaylists.length} 个重复播放源`, 'success')
+        } else {
+          showToast('没有发现重复的播放源', 'info')
+        }
+      } catch (error) {
+        console.error('清理重复播放源失败:', error)
+        showToast('清理失败: ' + error.message, 'error')
+      }
+    }
     
     // 监听播放列表变化，更新过滤后的频道列表
     watch([selectedPlaylist, channelSearchText], () => {
@@ -570,19 +672,64 @@ export default {
     const filterChannels = () => {
       if (!selectedPlaylist.value) {
         filteredChannels.value = []
+        updateVirtualScroll()
         return
       }
-      
+
       const searchText = channelSearchText.value.toLowerCase()
       if (!searchText) {
         filteredChannels.value = selectedPlaylist.value.channels
+      } else {
+        filteredChannels.value = selectedPlaylist.value.channels.filter(channel =>
+          channel.name.toLowerCase().includes(searchText) ||
+          channel.id.toString().includes(searchText)
+        )
+      }
+      updateVirtualScroll()
+    }
+
+    // 虚拟滚动处理 - 优化性能
+    const updateVirtualScroll = () => {
+      const totalItems = filteredChannels.value.length
+      if (totalItems === 0) {
+        visibleChannels.value = []
+        virtualScrollHeight.value = 0
+        virtualScrollOffset.value = 0
+        scrollProgress.value = 0
         return
       }
-      
-      filteredChannels.value = selectedPlaylist.value.channels.filter(channel => 
-        channel.name.toLowerCase().includes(searchText) ||
-        channel.id.toString().includes(searchText)
-      )
+
+      virtualScrollHeight.value = totalItems * itemHeight
+
+      const startIndex = Math.max(0, Math.floor(scrollTop.value / itemHeight) - bufferCount)
+      const endIndex = Math.min(totalItems, startIndex + visibleCount + bufferCount * 2)
+
+      visibleChannels.value = filteredChannels.value.slice(startIndex, endIndex)
+      virtualScrollOffset.value = startIndex * itemHeight
+
+      // 计算滚动进度
+      const maxScroll = virtualScrollHeight.value - (channelContainer.value?.clientHeight || 0)
+      scrollProgress.value = maxScroll > 0 ? Math.min(100, (scrollTop.value / maxScroll) * 100) : 0
+    }
+
+    // 节流滚动处理，提升性能
+    const handleChannelScroll = (event) => {
+      scrollTop.value = event.target.scrollTop
+      isScrolling.value = true
+
+      // 清除之前的定时器
+      if (scrollTimer.value) {
+        clearTimeout(scrollTimer.value)
+      }
+
+      // 立即更新一次
+      updateVirtualScroll()
+
+      // 设置定时器，滚动停止后再次更新
+      scrollTimer.value = setTimeout(() => {
+        isScrolling.value = false
+        updateVirtualScroll()
+      }, 100)
     }
     
     // 添加清理播放器的函数
@@ -1194,9 +1341,17 @@ export default {
       devToolsEnabled,
       toggleSettings,
       toggleDevTools,
+      cleanupDuplicates,
       channelSearchText,
       filteredChannels,
       filterChannels,
+      // 虚拟滚动
+      channelContainer,
+      visibleChannels,
+      virtualScrollHeight,
+      virtualScrollOffset,
+      handleChannelScroll,
+      scrollProgress,
       videoPlayer,
       cleanupPlayers,
       initHlsPlayer,
@@ -1305,25 +1460,7 @@ body {
   font-size: 16px;
 }
 
-.icon {
-  cursor: pointer;
-  font-size: 20px;
-  color: #1d1d1f;
-  transition: all 0.2s ease;
-  padding: 8px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(0, 0, 0, 0.1);
-}
-
-.icon:hover {
-  color: #007aff;
-  background: rgba(255, 255, 255, 0.9);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
+/* 图标样式已移动到 .player-icons .icon */
 
 .playlists-container {
   padding: 24px;
@@ -1388,11 +1525,7 @@ body {
   letter-spacing: 0.5px;
 }
 
-.playlist-cloud-icon {
-  font-size: 28px;
-  opacity: 0.6;
-  color: #007aff;
-}
+
 
 .add-card {
   border: 2px dashed rgba(0, 122, 255, 0.3);
@@ -1447,6 +1580,28 @@ body {
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid #3a3a3a;
+  position: relative;
+}
+
+/* 滚动进度指示器 */
+.scroll-indicator {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 30px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.scroll-progress {
+  width: 100%;
+  background: linear-gradient(180deg, #007aff 0%, #0056d3 100%);
+  border-radius: 2px;
+  transition: height 0.2s ease;
+  min-height: 2px;
 }
 
 .channel-list-header h3 {
@@ -1494,80 +1649,39 @@ body {
   font-weight: bold;
 }
 
-/* Apple风格滚动条样式 */
+/* 自定义滚动条样式 - 更明显的设计 */
 .channel-items::-webkit-scrollbar {
-  width: 8px;
+  width: 12px;
 }
 
 .channel-items::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 4px;
-  margin: 8px 0;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+  margin: 4px;
 }
 
 .channel-items::-webkit-scrollbar-thumb {
-  background: rgba(0, 122, 255, 0.6);
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  background: linear-gradient(180deg, #007aff 0%, #0056d3 100%);
+  border-radius: 6px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .channel-items::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 122, 255, 0.8);
-  box-shadow: 0 2px 6px rgba(0, 122, 255, 0.3);
+  background: linear-gradient(180deg, #0056d3 0%, #003d99 100%);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
 }
 
 .channel-items::-webkit-scrollbar-thumb:active {
-  background: #007aff;
-}
-
-/* 滚动时显示更明显的指示 */
-.channel-items {
-  scroll-behavior: smooth;
-}
-
-.channel-items:hover::-webkit-scrollbar-thumb {
-  background: rgba(0, 122, 255, 0.8);
-}
-
-/* 为频道列表添加渐变遮罩，显示滚动状态 */
-.channel-list::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 20px;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.8), transparent);
-  pointer-events: none;
-  z-index: 1;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.channel-list::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 20px;
-  background: linear-gradient(to top, rgba(255, 255, 255, 0.8), transparent);
-  pointer-events: none;
-  z-index: 1;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.channel-list:hover::before,
-.channel-list:hover::after {
-  opacity: 1;
+  background: linear-gradient(180deg, #003d99 0%, #002966 100%);
 }
 
 .playlist-content {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   width: 100%;
+  position: relative;
+  padding-right: 80px; /* 为操作按钮留出空间 */
 }
 
 .playlist-actions {
@@ -1577,7 +1691,8 @@ body {
   opacity: 0;
   transition: all 0.3s ease;
   display: flex;
-  gap: 8px;
+  gap: 6px;
+  z-index: 10;
 }
 
 .playlist-card:hover .playlist-actions {
@@ -1585,30 +1700,42 @@ body {
 }
 
 .edit-btn, .delete-btn {
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.08);
   cursor: pointer;
-  padding: 6px;
-  font-size: 16px;
-  border-radius: 8px;
+  padding: 8px;
+  border-radius: 10px;
   transition: all 0.2s ease;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
 }
 
 .edit-btn {
   color: #007aff;
 }
 
+.edit-btn:hover {
+  color: #0056d3;
+  background: rgba(0, 122, 255, 0.1);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 122, 255, 0.2);
+}
+
 .delete-btn {
   color: #ff3b30;
 }
 
-.edit-btn:hover, .delete-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  background: rgba(255, 255, 255, 1);
+.delete-btn:hover {
+  color: #d70015;
+  background: rgba(255, 59, 48, 0.1);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(255, 59, 48, 0.2);
 }
 
 /* Apple风格对话框样式 */
@@ -1793,6 +1920,7 @@ body {
   display: flex;
   align-items: center;
   gap: 16px;
+  flex-shrink: 0;
 }
 
 .channel-search {
@@ -1827,21 +1955,29 @@ body {
 
 .player-icons {
   display: flex;
-  gap: 12px;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .player-icons .icon {
   cursor: pointer;
-  font-size: 18px;
+  font-size: 16px;
   color: #1d1d1f;
   transition: all 0.2s ease;
-  padding: 8px;
+  padding: 8px 10px;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.6);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(0, 0, 0, 0.1);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  min-width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
 }
 
 .player-icons .icon:hover {
@@ -1982,6 +2118,23 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 虚拟滚动样式 */
+.virtual-scroll-container {
+  position: relative;
+  width: 100%;
+}
+
+.virtual-scroll-content {
+  position: relative;
+  width: 100%;
+}
+
+.channel-item {
+  height: 60px;
+  box-sizing: border-box;
+  flex-shrink: 0; /* 确保高度固定 */
 }
 
 .video-js {
@@ -2300,6 +2453,16 @@ body {
   transform: translateX(20px);
 }
 
+.action-icon {
+  font-size: 16px;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.settings-item:hover .action-icon {
+  opacity: 1;
+}
+
 .settings-icon {
   cursor: pointer;
 }
@@ -2357,29 +2520,21 @@ body {
 
 /* 滚动条样式 */
 .channel-list::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
 }
 
 .channel-list::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 4px;
-  margin: 8px 0;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
 }
 
 .channel-list::-webkit-scrollbar-thumb {
-  background: rgba(0, 122, 255, 0.6);
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  background: rgba(0, 122, 255, 0.3);
+  border-radius: 3px;
 }
 
 .channel-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 122, 255, 0.8);
-  box-shadow: 0 2px 6px rgba(0, 122, 255, 0.3);
-}
-
-.channel-list::-webkit-scrollbar-thumb:active {
-  background: #007aff;
+  background: rgba(0, 122, 255, 0.5);
 }
 
 /* 添加日志面板样式 */
