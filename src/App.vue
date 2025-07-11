@@ -159,12 +159,19 @@
       @save="savePlaylistChanges"
     />
     <div v-if="showDeleteConfirm" class="dialog-overlay">
-      <div class="dialog-content">
+      <div class="dialog-content delete-dialog">
+        <div class="dialog-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="10" fill="#ff3b30" fill-opacity="0.1"/>
+            <path d="M12 8v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" stroke="#ff3b30" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
         <h3>确认删除</h3>
-        <p>确定要删除播放列表 "{{ playlistToDelete?.name }}" 吗？</p>
-        <div class="dialog-buttons">
-          <button class="cancel-btn" @click="showDeleteConfirm = false">取消</button>
-          <button class="delete-btn" @click="deletePlaylist">删除</button>
+        <p>确定要删除播放列表 <strong>"{{ playlistToDelete?.name }}"</strong> 吗？</p>
+        <p class="warning-text">此操作无法撤销</p>
+        <div class="dialog-buttons delete-buttons">
+          <button class="cancel-btn secondary-btn" @click="showDeleteConfirm = false">取消</button>
+          <button class="delete-btn danger-btn" @click="deletePlaylist">删除</button>
         </div>
       </div>
     </div>
@@ -180,9 +187,9 @@
           placeholder="请输入新名称"
           @keyup.enter="savePlaylistName"
         >
-        <div class="dialog-buttons">
-          <button class="cancel-btn" @click="showEditNameDialog = false">取消</button>
-          <button class="save-btn" @click="savePlaylistName">保存</button>
+        <div class="dialog-buttons edit-name-buttons">
+          <button class="cancel-btn secondary-btn" @click="showEditNameDialog = false">取消</button>
+          <button class="save-btn primary-btn" @click="savePlaylistName">保存</button>
         </div>
       </div>
     </div>
@@ -677,14 +684,42 @@ export default {
       }
 
       const searchText = channelSearchText.value.toLowerCase()
+      let channels = []
+
       if (!searchText) {
-        filteredChannels.value = selectedPlaylist.value.channels
+        channels = [...selectedPlaylist.value.channels]
       } else {
-        filteredChannels.value = selectedPlaylist.value.channels.filter(channel =>
+        channels = selectedPlaylist.value.channels.filter(channel =>
           channel.name.toLowerCase().includes(searchText) ||
           channel.id.toString().includes(searchText)
         )
       }
+
+      // 按序号排序（数字优先，然后字母）
+      channels.sort((a, b) => {
+        const aId = a.id.toString()
+        const bId = b.id.toString()
+
+        // 检查是否为纯数字
+        const aIsNumber = /^\d+$/.test(aId)
+        const bIsNumber = /^\d+$/.test(bId)
+
+        if (aIsNumber && bIsNumber) {
+          // 都是数字，按数值排序
+          return parseInt(aId) - parseInt(bId)
+        } else if (aIsNumber && !bIsNumber) {
+          // a是数字，b不是，数字排在前面
+          return -1
+        } else if (!aIsNumber && bIsNumber) {
+          // a不是数字，b是，数字排在前面
+          return 1
+        } else {
+          // 都不是纯数字，按字符串排序
+          return aId.localeCompare(bId)
+        }
+      })
+
+      filteredChannels.value = channels
       updateVirtualScroll()
     }
 
@@ -1348,6 +1383,7 @@ export default {
       // 虚拟滚动
       channelContainer,
       visibleChannels,
+      visibleCount,
       virtualScrollHeight,
       virtualScrollOffset,
       handleChannelScroll,
@@ -1782,6 +1818,113 @@ body {
   line-height: 1.5;
 }
 
+/* 删除确认对话框特定样式 */
+.delete-dialog {
+  max-width: 400px;
+  text-align: center;
+}
+
+.dialog-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.delete-dialog h3 {
+  margin: 0 0 12px 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.delete-dialog p {
+  margin: 8px 0;
+  color: #86868b;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.warning-text {
+  color: #ff3b30 !important;
+  font-size: 14px !important;
+  font-weight: 500;
+  margin-top: 4px !important;
+}
+
+.delete-buttons {
+  margin-top: 24px;
+  gap: 16px;
+  justify-content: center !important;
+}
+
+.secondary-btn, .danger-btn {
+  border: none;
+  min-width: 120px;
+  height: 48px;
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+  line-height: 1.2;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.secondary-btn {
+  background: rgba(142, 142, 147, 0.12) !important;
+  color: #007aff !important;
+}
+
+.secondary-btn:hover {
+  background: rgba(142, 142, 147, 0.2) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.danger-btn {
+  background: #ff3b30 !important;
+  color: white !important;
+}
+
+.danger-btn:hover {
+  background: #d70015 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(255, 59, 48, 0.3);
+}
+
+/* 主要按钮样式 */
+.primary-btn {
+  background: #007aff !important;
+  color: white !important;
+  border: none;
+  min-width: 120px;
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.primary-btn:hover {
+  background: #0056d6 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
+}
+
+.primary-btn:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+  box-shadow: none !important;
+  background: #007aff !important;
+}
+
 .dialog-buttons {
   display: flex;
   justify-content: flex-end;
@@ -1799,27 +1942,35 @@ body {
   transition: all 0.2s ease;
 }
 
-.dialog-buttons .cancel-btn {
-  background: rgba(142, 142, 147, 0.12);
-  color: #007aff;
+/* 编辑名称对话框样式 */
+.edit-name-input {
+  width: 100%;
+  padding: 14px 16px;
+  margin: 16px 0 24px 0;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  color: #1d1d1f;
+  font-size: 16px;
+  font-weight: 400;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
 }
 
-.dialog-buttons .cancel-btn:hover {
-  background: rgba(142, 142, 147, 0.2);
+.edit-name-input:focus {
+  outline: none;
+  border-color: #007aff;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+  background: rgba(255, 255, 255, 0.95);
 }
 
-.dialog-buttons .delete-btn, .dialog-buttons .save-btn {
-  background: #007aff;
-  color: white;
+.edit-name-input::placeholder {
+  color: #86868b;
 }
 
-.dialog-buttons .delete-btn {
-  background: #ff3b30;
-}
-
-.dialog-buttons .delete-btn:hover, .dialog-buttons .save-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+.edit-name-buttons {
+  justify-content: center !important;
+  gap: 16px !important;
 }
 
 @keyframes fadeIn {

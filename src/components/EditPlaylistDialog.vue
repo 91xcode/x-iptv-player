@@ -42,10 +42,10 @@
       </div>
 
       <div class="dialog-buttons">
-        <button class="cancel-btn" @click="$emit('close')">取消</button>
-        <button 
-          class="save-btn" 
-          @click="saveChanges" 
+        <button class="cancel-btn secondary-btn" @click="$emit('close')">取消</button>
+        <button
+          class="save-btn primary-btn"
+          @click="saveChanges"
           :disabled="!editedName.trim() || !editedUrl.trim()"
         >保存</button>
       </div>
@@ -231,46 +231,52 @@ input::placeholder {
 
 .dialog-buttons {
   display: flex;
-  justify-content: flex-end;
-  gap: 12px;
+  justify-content: center;
+  gap: 16px;
   margin-top: 32px;
 }
 
-button {
+/* 统一按钮基础样式 */
+.secondary-btn, .primary-btn {
+  border: none;
+  min-width: 120px;
   padding: 12px 24px;
   border-radius: 12px;
-  border: none;
-  cursor: pointer;
-  font-weight: 500;
   font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
   transition: all 0.2s ease;
   font-family: inherit;
 }
 
-.cancel-btn {
-  background: rgba(142, 142, 147, 0.12);
-  color: #007aff;
+.secondary-btn {
+  background: rgba(142, 142, 147, 0.12) !important;
+  color: #007aff !important;
 }
 
-.cancel-btn:hover {
-  background: rgba(142, 142, 147, 0.2);
-}
-
-.save-btn {
-  background: #007aff;
-  color: #fff;
-}
-
-.save-btn:hover {
+.secondary-btn:hover {
+  background: rgba(142, 142, 147, 0.2) !important;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.primary-btn {
+  background: #007aff !important;
+  color: white !important;
+}
+
+.primary-btn:hover {
+  background: #0056d6 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
+}
+
+.primary-btn:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
   transform: none !important;
   box-shadow: none !important;
+  background: #007aff !important;
 }
 
 @keyframes fadeIn {

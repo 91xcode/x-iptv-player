@@ -55,7 +55,7 @@
       "main.js",
       "preload.js",
       "node_modules/**/*",
-      "!src/assets/electron.icns"
+      "src/assets/electron.icns"
     ]
   },
   "dependencies": {
