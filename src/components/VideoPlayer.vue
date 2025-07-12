@@ -122,6 +122,7 @@ export default {
     let errorRecoveryManager = null
     let progressiveLoader = null
     let networkMonitor = null
+    let errorStatistics = null
     
     // 计算属性
     const networkQualityText = computed(() => {
@@ -133,6 +134,47 @@ export default {
         default: return '网络未知'
       }
     })
+    
+    // 清理播放器 - 提前定义
+    const cleanup = () => {
+      try {
+        if (hlsPlayer) {
+          hlsPlayer.destroy()
+          hlsPlayer = null
+        }
+        
+        if (mpegtsPlayer) {
+          mpegtsPlayer.destroy()
+          mpegtsPlayer = null
+        }
+        
+        if (bufferManager) {
+          bufferManager.destroy()
+          bufferManager = null
+        }
+        
+        if (errorRecoveryManager) {
+          errorRecoveryManager.reset()
+          errorRecoveryManager = null
+        }
+        
+        progressiveLoader = null
+        networkMonitor = null
+        errorStatistics = null
+        
+        if (videoElement.value) {
+          videoElement.value.pause()
+          videoElement.value.src = ''
+          videoElement.value.load()
+        }
+        
+        availableQualities.value = []
+        currentQuality.value = null
+        networkQuality.value = 'unknown'
+      } catch (error) {
+        console.error('清理播放器时出错:', error)
+      }
+    }
     
     // 监听src变化
     watch(() => props.src, (newSrc) => {
@@ -705,6 +747,100 @@ export default {
       }
     }
     
+    // 📊 错误统计器
+    const createErrorStatistics = () => {
+      const stats = {
+        totalErrors: 0,
+        fatalErrors: 0,
+        networkErrors: 0,
+        mediaErrors: 0,
+        bufferErrors: 0,
+        ignoredErrors: 0,
+        lastErrorTime: 0,
+        errorsByType: {}
+      }
+      
+      let errorCountWindow = [] // 滑动窗口统计
+      const windowSize = 60000 // 1分钟窗口
+      
+      const recordError = (data) => {
+        const now = Date.now()
+        
+        // 清理过期的错误记录
+        errorCountWindow = errorCountWindow.filter(time => now - time < windowSize)
+        errorCountWindow.push(now)
+        
+        // 更新统计
+        stats.totalErrors++
+        stats.lastErrorTime = now
+        
+        if (data.fatal) {
+          stats.fatalErrors++
+        }
+        
+        // 按类型统计
+        if (!stats.errorsByType[data.details]) {
+          stats.errorsByType[data.details] = 0
+        }
+        stats.errorsByType[data.details]++
+        
+        // 按错误类型分类
+        switch (data.type) {
+          case 'networkError':
+            stats.networkErrors++
+            break
+          case 'mediaError':
+            stats.mediaErrors++
+            break
+          default:
+            if (data.details && data.details.includes('buffer')) {
+              stats.bufferErrors++
+            }
+            break
+        }
+      }
+      
+      const recordIgnoredError = (data) => {
+        stats.ignoredErrors++
+      }
+      
+      const getErrorRate = () => {
+        return errorCountWindow.length // 每分钟错误数
+      }
+      
+      const getStats = () => {
+        return {
+          ...stats,
+          errorRate: getErrorRate(),
+          recentErrors: errorCountWindow.length
+        }
+      }
+      
+      const shouldShowError = (data) => {
+        const errorRate = getErrorRate()
+        
+        // 如果错误率过高，只显示致命错误
+        if (errorRate > 10) {
+          return data.fatal
+        }
+        
+        // 如果错误率中等，显示重要错误
+        if (errorRate > 5) {
+          return data.fatal || data.details === 'bufferAppendError'
+        }
+        
+        // 错误率低时，显示大部分错误
+        return true
+      }
+      
+      return {
+        recordError,
+        recordIgnoredError,
+        shouldShowError,
+        getStats
+      }
+    }
+    
     // HLS播放器初始化
     const initHlsPlayer = async (url) => {
       try {
@@ -719,6 +855,7 @@ export default {
         errorRecoveryManager = createErrorRecoveryManager()
         progressiveLoader = createProgressiveLoader()
         networkMonitor = createNetworkMonitor()
+        errorStatistics = createErrorStatistics()
         
         progressiveLoader.startLoading()
         
@@ -727,15 +864,15 @@ export default {
           enableWorker: true,
           lowLatencyMode: false,
           
-          // 超时配置
-          fragLoadingTimeOut: 20000,
-          manifestLoadingTimeOut: 15000,
-          levelLoadingTimeOut: 15000,
+          // 超时配置 - 增加超时时间减少网络错误
+          fragLoadingTimeOut: 30000,
+          manifestLoadingTimeOut: 20000,
+          levelLoadingTimeOut: 20000,
           
-          // 重试配置
-          manifestLoadingMaxRetry: 3,
-          levelLoadingMaxRetry: 4,
-          fragLoadingMaxRetry: 6,
+          // 重试配置 - 减少重试次数，让我们的错误恢复机制接管
+          manifestLoadingMaxRetry: 2,
+          levelLoadingMaxRetry: 2,
+          fragLoadingMaxRetry: 3,
           
           // 缓冲区配置
           maxBufferLength: bufferManager.config.maxBufferLength,
@@ -750,23 +887,31 @@ export default {
           // 质量控制
           startLevel: -1,
           capLevelToPlayerSize: true,
-          maxStarvationDelay: 4,
-          maxLoadingDelay: 4,
+          maxStarvationDelay: 6,
+          maxLoadingDelay: 6,
           
-          // 自适应比特率
-          abrEwmaFastLive: 3.0,
-          abrEwmaSlowLive: 9.0,
-          abrEwmaFastVoD: 3.0,
-          abrEwmaSlowVoD: 9.0,
-          abrEwmaDefaultEstimate: 500000,
-          abrBandWidthFactor: 0.95,
-          abrBandWidthUpFactor: 0.7,
+          // 自适应比特率 - 更保守的设置
+          abrEwmaFastLive: 5.0,
+          abrEwmaSlowLive: 15.0,
+          abrEwmaFastVoD: 5.0,
+          abrEwmaSlowVoD: 15.0,
+          abrEwmaDefaultEstimate: 1000000,
+          abrBandWidthFactor: 0.8,
+          abrBandWidthUpFactor: 0.6,
           
-          // 错误处理
-          enableSoftwareAES: true,
-          enableWebVTT: true,
-          enableIMSC1: true,
-          enableCEA708Captions: true
+          // 错误处理 - 禁用一些可能引起问题的功能
+          enableSoftwareAES: false,
+          enableWebVTT: false,
+          enableIMSC1: false,
+          enableCEA708Captions: false,
+          
+          // 更严格的错误处理
+          fatalErrorRecovery: false,
+          
+          // 片段加载优化
+          fragLoadingMaxRetryTimeout: 64000,
+          manifestLoadingMaxRetryTimeout: 64000,
+          levelLoadingMaxRetryTimeout: 64000
         }
         
         hlsPlayer = new Hls(hlsConfig)
@@ -836,42 +981,121 @@ export default {
         })
         
         hlsPlayer.on(Hls.Events.ERROR, (event, data) => {
-          console.log('⚠️ HLS错误:', data)
+          const errorDetails = {
+            type: data.type,
+            details: data.details,
+            fatal: data.fatal,
+            reason: data.reason,
+            level: data.level,
+            url: data.url,
+            response: data.response,
+            context: data.context,
+            networkDetails: data.networkDetails
+          }
+          
+          // 记录错误到统计器
+          errorStatistics.recordError(data)
+          
+          // 过滤掉一些不重要的错误，避免控制台被刷屏
+          const ignorableErrors = [
+            'fragLoadError', // 片段加载错误（通常会自动重试）
+            'keyLoadError', // 密钥加载错误
+            'fragParsingError', // 片段解析错误
+            'fragLoadTimeOut', // 片段加载超时（非致命）
+            'levelLoadTimeOut', // 级别加载超时（非致命）
+            'manifestLoadTimeOut' // 清单加载超时（非致命）
+          ]
+          
+          const shouldIgnore = !data.fatal && ignorableErrors.includes(data.details)
+          
+          if (shouldIgnore) {
+            errorStatistics.recordIgnoredError(data)
+          } else if (errorStatistics.shouldShowError(data)) {
+            console.log('⚠️ HLS错误详情:', {
+              type: data.type,
+              details: data.details,
+              fatal: data.fatal,
+              reason: data.reason || '未知原因',
+              url: data.url || '未知URL',
+              errorRate: errorStatistics.getStats().errorRate
+            })
+          }
+          
+          // 定期报告错误统计（每30秒）
+          const stats = errorStatistics.getStats()
+          if (stats.totalErrors > 0 && stats.totalErrors % 30 === 0) {
+            console.log('📊 错误统计报告:', {
+              总错误数: stats.totalErrors,
+              致命错误: stats.fatalErrors,
+              网络错误: stats.networkErrors,
+              媒体错误: stats.mediaErrors,
+              缓冲错误: stats.bufferErrors,
+              忽略错误: stats.ignoredErrors,
+              错误率: `${stats.errorRate}/分钟`,
+              最近错误: Object.keys(stats.errorsByType).slice(0, 3)
+            })
+          }
           
           // 🎯 bufferAppendError专门处理
           if (data.details === 'bufferAppendError') {
-            console.log('🎯 专门处理bufferAppendError')
-            bufferManager.handleBufferError(data)
+            console.log('🎯 专门处理bufferAppendError:', {
+              fatal: data.fatal,
+              reason: data.reason,
+              details: data.details
+            })
+            
+            if (bufferManager) {
+              bufferManager.handleBufferError(errorDetails)
+            }
             
             if (data.fatal) {
-              errorRecoveryManager.attemptRecovery('buffer', data)
+              errorRecoveryManager.attemptRecovery('buffer', errorDetails)
             }
             return
           }
           
-          // 其他错误处理
-          if (data.fatal) {
-            let errorType = 'generic'
-            
-            switch (data.type) {
-              case Hls.ErrorTypes.NETWORK_ERROR:
-                errorType = 'network'
-                break
-              case Hls.ErrorTypes.MEDIA_ERROR:
-                errorType = 'media'
-                break
-              case Hls.ErrorTypes.MUX_ERROR:
-                errorType = 'media'
-                break
-              case Hls.ErrorTypes.KEY_SYSTEM_ERROR:
-                errorType = 'media'
-                break
-              default:
-                errorType = 'generic'
-                break
-            }
-            
-            errorRecoveryManager.attemptRecovery(errorType, data)
+          // 非致命错误处理
+          if (!data.fatal) {
+            console.log('⚠️ 非致命HLS错误，继续播放:', data.details)
+            return
+          }
+          
+          // 致命错误处理
+          let errorType = 'generic'
+          let errorMessage = `HLS错误: ${data.details}`
+          
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              errorType = 'network'
+              errorMessage = `网络错误: ${data.details} ${data.response?.code ? `(${data.response.code})` : ''}`
+              break
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              errorType = 'media'
+              errorMessage = `媒体错误: ${data.details} ${data.reason || ''}`
+              break
+            case Hls.ErrorTypes.MUX_ERROR:
+              errorType = 'media'
+              errorMessage = `复用错误: ${data.details}`
+              break
+            case Hls.ErrorTypes.KEY_SYSTEM_ERROR:
+              errorType = 'media'
+              errorMessage = `密钥系统错误: ${data.details}`
+              break
+            default:
+              errorType = 'generic'
+              errorMessage = `未知错误: ${data.details || data.type}`
+              break
+          }
+          
+          console.error(`❌ 致命HLS错误 [${errorType}]:`, errorMessage)
+          
+          if (errorRecoveryManager) {
+            errorRecoveryManager.attemptRecovery(errorType, {
+              ...errorDetails,
+              message: errorMessage
+            })
+          } else {
+            showError(errorMessage)
           }
         })
         
@@ -992,41 +1216,7 @@ export default {
       }
     }
     
-    // 清理播放器
-    const cleanup = () => {
-      if (hlsPlayer) {
-        hlsPlayer.destroy()
-        hlsPlayer = null
-      }
-      
-      if (mpegtsPlayer) {
-        mpegtsPlayer.destroy()
-        mpegtsPlayer = null
-      }
-      
-      if (bufferManager) {
-        bufferManager.destroy()
-        bufferManager = null
-      }
-      
-      if (errorRecoveryManager) {
-        errorRecoveryManager.reset()
-        errorRecoveryManager = null
-      }
-      
-      progressiveLoader = null
-      networkMonitor = null
-      
-      if (videoElement.value) {
-        videoElement.value.pause()
-        videoElement.value.src = ''
-        videoElement.value.load()
-      }
-      
-      availableQualities.value = []
-      currentQuality.value = null
-      networkQuality.value = 'unknown'
-    }
+
     
     // 显示错误
     const showError = (message) => {
