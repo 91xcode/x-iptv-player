@@ -354,16 +354,16 @@ export default {
       let bufferSize = props.bufferSize
       
       const config = {
-        minBufferLength: 2,
-        maxBufferLength: bufferSize,
-        maxMaxBufferLength: bufferSize * 2,
-        backBufferLength: 10,
-        bufferFlushingThreshold: 5,
-        optimalBufferLength: bufferSize,
-        emergencyBufferLength: 1,
-        bufferHealthCheckInterval: 5000,
-        maxBufferHoleSize: 0.5,
-        bufferAppendErrorThreshold: 5
+        minBufferLength: 5,                    // 增加最小缓冲区长度
+        maxBufferLength: Math.max(30, bufferSize), // 确保至少30秒缓冲
+        maxMaxBufferLength: Math.max(60, bufferSize * 2), // 确保至少60秒最大缓冲
+        backBufferLength: 30,                  // 增加后向缓冲区
+        bufferFlushingThreshold: 10,           // 提高清理阈值
+        optimalBufferLength: Math.max(20, bufferSize), // 最优缓冲区长度
+        emergencyBufferLength: 3,              // 增加紧急缓冲区长度
+        bufferHealthCheckInterval: 10000,      // 减少健康检查频率
+        maxBufferHoleSize: 1.0,                // 允许更大的缓冲区空洞
+        bufferAppendErrorThreshold: 10         // 提高错误阈值，减少频繁清理
       }
       
       let bufferAppendErrorCount = 0
@@ -472,18 +472,41 @@ export default {
         }
         
         const currentTime = videoEl.currentTime || 0
-        const cleanupRange = Math.max(0, currentTime - config.backBufferLength)
-        
-        console.log('🧹 执行缓冲区清理:', {
-          currentTime: Math.round(currentTime * 100) / 100,
-          cleanupRange: Math.round(cleanupRange * 100) / 100,
-          bufferHealth
-        })
-        
+
+        // 计算总缓冲区长度，只有在真正需要时才清理
+        let totalBufferedLength = 0
         const mediaSource = hlsPlayer.media
         if (!mediaSource.sourceBuffers || mediaSource.sourceBuffers.length === 0) {
           return
         }
+
+        // 计算总缓冲区大小
+        for (let i = 0; i < mediaSource.sourceBuffers.length; i++) {
+          const buffer = mediaSource.sourceBuffers[i]
+          if (buffer && buffer.buffered) {
+            for (let j = 0; j < buffer.buffered.length; j++) {
+              totalBufferedLength += buffer.buffered.end(j) - buffer.buffered.start(j)
+            }
+          }
+        }
+
+        // 只有当缓冲区过大时才清理（更保守的策略）
+        const shouldCleanup = totalBufferedLength > config.maxBufferLength * 1.8
+
+        console.log('🧹 缓冲区清理检查:', {
+          currentTime: Math.round(currentTime * 100) / 100,
+          totalBufferedLength: Math.round(totalBufferedLength * 100) / 100,
+          maxBufferLength: config.maxBufferLength,
+          shouldCleanup,
+          bufferHealth
+        })
+
+        if (!shouldCleanup) {
+          console.log('📊 缓冲区大小合理，跳过清理')
+          return
+        }
+
+        const cleanupRange = Math.max(0, currentTime - config.backBufferLength * 1.5) // 更保守的清理范围
         
         const cleanupPromises = []
         
@@ -529,16 +552,24 @@ export default {
       const handleBufferError = async (error) => {
         bufferAppendErrorCount++
         console.log(`🔄 处理缓冲区错误 (${bufferAppendErrorCount}/${config.bufferAppendErrorThreshold}):`, error)
-        
+
+        // 更保守的错误处理策略
         if (bufferAppendErrorCount >= config.bufferAppendErrorThreshold) {
           console.log('🔄 缓冲区错误次数过多，执行深度清理')
           await performDeepBufferCleanup()
           bufferAppendErrorCount = 0
-        } else {
-          // 标准清理
+        } else if (bufferAppendErrorCount >= config.bufferAppendErrorThreshold / 2) {
+          // 中等错误频率时，执行标准清理
+          console.log('🔄 执行标准缓冲区清理')
           await performBufferCleanup()
-          
-          // 动态调整缓冲区大小
+        } else {
+          // 低错误频率时，只记录不处理，避免过度干预
+          console.log('🔄 缓冲区错误频率较低，暂不处理')
+          return
+        }
+
+        // 只在真正需要时才调整缓冲区大小
+        if (bufferAppendErrorCount >= config.bufferAppendErrorThreshold / 3) {
           reduceBufferSize()
         }
       }
@@ -863,55 +894,67 @@ export default {
           debug: false,
           enableWorker: true,
           lowLatencyMode: false,
-          
-          // 超时配置 - 增加超时时间减少网络错误
-          fragLoadingTimeOut: 30000,
-          manifestLoadingTimeOut: 20000,
-          levelLoadingTimeOut: 20000,
-          
-          // 重试配置 - 减少重试次数，让我们的错误恢复机制接管
-          manifestLoadingMaxRetry: 2,
-          levelLoadingMaxRetry: 2,
-          fragLoadingMaxRetry: 3,
-          
-          // 缓冲区配置
-          maxBufferLength: bufferManager.config.maxBufferLength,
-          maxMaxBufferLength: bufferManager.config.maxMaxBufferLength,
-          backBufferLength: bufferManager.config.backBufferLength,
-          maxBufferSize: 60 * 1000 * 1000,
-          
-          // 自动清理
+
+          // 超时配置 - 更宽松的超时设置，避免网络波动导致的错误
+          fragLoadingTimeOut: 60000,        // 增加到60秒
+          manifestLoadingTimeOut: 30000,    // 增加到30秒
+          levelLoadingTimeOut: 30000,       // 增加到30秒
+
+          // 重试配置 - 适度增加重试次数，减少错误恢复机制的负担
+          manifestLoadingMaxRetry: 4,       // 增加重试次数
+          levelLoadingMaxRetry: 4,          // 增加重试次数
+          fragLoadingMaxRetry: 6,           // 增加重试次数
+
+          // 缓冲区配置 - 更大的缓冲区以应对网络波动
+          maxBufferLength: Math.max(30, bufferManager.config.maxBufferLength),     // 至少30秒
+          maxMaxBufferLength: Math.max(60, bufferManager.config.maxMaxBufferLength), // 至少60秒
+          backBufferLength: 30,             // 增加后向缓冲区
+          maxBufferSize: 120 * 1000 * 1000, // 增加到120MB
+
+          // 缓冲区健康检查
+          maxBufferHole: 0.3,               // 允许更大的缓冲区空洞
+          maxSeekHole: 2,                   // 允许更大的seek空洞
+
+          // 自动清理 - 更保守的清理策略
           autoCleanupSourceBuffer: true,
-          autoCleanupMaxBackBufferLength: bufferManager.config.backBufferLength,
-          
-          // 质量控制
+          autoCleanupMaxBackBufferLength: 30,
+
+          // 质量控制 - 更稳定的质量选择
           startLevel: -1,
-          capLevelToPlayerSize: true,
-          maxStarvationDelay: 6,
-          maxLoadingDelay: 6,
-          
-          // 自适应比特率 - 更保守的设置
-          abrEwmaFastLive: 5.0,
-          abrEwmaSlowLive: 15.0,
-          abrEwmaFastVoD: 5.0,
-          abrEwmaSlowVoD: 15.0,
-          abrEwmaDefaultEstimate: 1000000,
-          abrBandWidthFactor: 0.8,
-          abrBandWidthUpFactor: 0.6,
-          
-          // 错误处理 - 禁用一些可能引起问题的功能
-          enableSoftwareAES: false,
+          capLevelToPlayerSize: false,      // 不限制质量到播放器尺寸
+          maxStarvationDelay: 10,           // 增加饥饿延迟容忍度
+          maxLoadingDelay: 10,              // 增加加载延迟容忍度
+
+          // 自适应比特率 - 更保守和稳定的设置
+          abrEwmaFastLive: 3.0,             // 降低快速响应
+          abrEwmaSlowLive: 9.0,             // 降低慢速响应
+          abrEwmaFastVoD: 3.0,              // 降低快速响应
+          abrEwmaSlowVoD: 9.0,              // 降低慢速响应
+          abrEwmaDefaultEstimate: 2000000,  // 提高默认估计带宽
+          abrBandWidthFactor: 0.95,         // 更保守的带宽因子
+          abrBandWidthUpFactor: 0.7,        // 更保守的上升因子
+          abrMaxWithRealBitrate: false,     // 不使用真实比特率限制
+
+          // 错误处理 - 启用更好的兼容性
+          enableSoftwareAES: true,          // 启用软件AES解密
           enableWebVTT: false,
           enableIMSC1: false,
           enableCEA708Captions: false,
-          
-          // 更严格的错误处理
-          fatalErrorRecovery: false,
-          
-          // 片段加载优化
-          fragLoadingMaxRetryTimeout: 64000,
-          manifestLoadingMaxRetryTimeout: 64000,
-          levelLoadingMaxRetryTimeout: 64000
+
+          // 错误恢复
+          fatalErrorRecovery: true,         // 启用致命错误恢复
+
+          // 片段加载优化 - 更长的超时时间
+          fragLoadingMaxRetryTimeout: 120000,
+          manifestLoadingMaxRetryTimeout: 120000,
+          levelLoadingMaxRetryTimeout: 120000,
+
+          // 网络优化
+          xhrSetup: function(xhr, url) {
+            // 设置更宽松的网络参数
+            xhr.timeout = 60000;
+            xhr.setRequestHeader('Cache-Control', 'no-cache');
+          }
         }
         
         hlsPlayer = new Hls(hlsConfig)
@@ -1043,11 +1086,42 @@ export default {
               reason: data.reason,
               details: data.details
             })
-            
+
             if (bufferManager) {
               bufferManager.handleBufferError(errorDetails)
             }
-            
+
+            if (data.fatal) {
+              errorRecoveryManager.attemptRecovery('buffer', errorDetails)
+            }
+            return
+          }
+
+          // 🎯 bufferStalledError专门处理 - 新增
+          if (data.details === 'bufferStalledError') {
+            console.log('🎯 专门处理bufferStalledError:', {
+              fatal: data.fatal,
+              reason: data.reason,
+              details: data.details,
+              currentTime: videoElement.value?.currentTime,
+              buffered: videoElement.value?.buffered
+            })
+
+            // 对于bufferStalledError，采用更温和的处理方式
+            if (!data.fatal) {
+              // 非致命的stalled错误，尝试简单的恢复
+              if (hlsPlayer) {
+                console.log('🔄 尝试重新开始加载以解决stalled问题')
+                hlsPlayer.startLoad()
+              }
+              return // 不显示错误信息，静默处理
+            }
+
+            // 致命的stalled错误才进行错误恢复
+            if (data.fatal && bufferManager) {
+              bufferManager.handleBufferError(errorDetails)
+            }
+
             if (data.fatal) {
               errorRecoveryManager.attemptRecovery('buffer', errorDetails)
             }
