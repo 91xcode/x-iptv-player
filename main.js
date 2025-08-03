@@ -17,6 +17,7 @@ if (!store.has('devToolsEnabled')) {
 let mainWindow;
 let logHistory = []
 const MAX_LOG_HISTORY = 1000
+let proxyPort = null
 
 // 添加文件日志函数
 function logToFile(message) {
@@ -389,6 +390,81 @@ ipcMain.handle('get-logs', () => {
 ipcMain.handle('clear-logs', () => {
   logHistory = []
   return true
+})
+
+// 添加获取远程播放列表的处理器
+ipcMain.handle('fetch-playlist', async (event, url) => {
+  try {
+    console.log('正在获取播放列表:', url)
+    
+    // 配置请求选项
+    const options = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/plain, application/vnd.apple.mpegurl, application/x-mpegURL, */*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      },
+      timeout: 15000, // 15秒超时
+      redirect: 'follow', // 允许重定向
+      compress: true
+    }
+    
+    const response = await fetch(url, options)
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+    
+    const content = await response.text()
+    console.log('播放列表获取成功，内容长度:', content.length)
+    
+    return { 
+      success: true, 
+      content: content,
+      url: url,
+      contentType: response.headers.get('content-type') || 'text/plain'
+    }
+  } catch (error) {
+    console.error('获取播放列表失败:', error.message)
+    return { 
+      error: error.message,
+      url: url
+    }
+  }
+})
+
+// 添加M3U8代理处理器
+ipcMain.handle('proxy-m3u8', async (event, url) => {
+  try {
+    console.log('代理M3U8请求:', url)
+    
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': 'application/vnd.apple.mpegurl, application/x-mpegURL, */*',
+        'Cache-Control': 'no-cache'
+      },
+      timeout: 10000
+    })
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+    
+    const content = await response.text()
+    return { 
+      success: true, 
+      content: content,
+      headers: {
+        'content-type': response.headers.get('content-type') || 'application/vnd.apple.mpegurl'
+      }
+    }
+  } catch (error) {
+    console.error('M3U8代理请求失败:', error.message)
+    return { error: error.message }
+  }
 })
 
 // Add this near other IPC handlers

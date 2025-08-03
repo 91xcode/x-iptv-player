@@ -74,6 +74,8 @@
     "electron": "^25.9.8",
     "electron-builder": "^24.6.4",
     "electron-rebuild": "^3.2.9",
+    "esbuild-wasm": "^0.18.20",
+    "terser": "^5.19.4",
     "vite": "^4.0.0",
     "wait-on": "^7.0.1"
   }

@@ -310,29 +310,94 @@ export default {
       )
     })
     
+    // 创建浏览器模式的模拟 electronAPI
+    const setupMockElectronAPI = () => {
+      if (!window.electronAPI) {
+        console.warn('设置浏览器模式的模拟 electronAPI')
+        
+        // 使用 localStorage 模拟数据持久化
+        const mockStore = {
+          get: (key) => {
+            try {
+              const data = localStorage.getItem(`mock_${key}`)
+              return data ? JSON.parse(data) : null
+            } catch {
+              return null
+            }
+          },
+          set: (key, value) => {
+            try {
+              localStorage.setItem(`mock_${key}`, JSON.stringify(value))
+            } catch (error) {
+              console.warn('localStorage写入失败:', error)
+            }
+          }
+        }
+        
+        window.electronAPI = {
+          getPlaylists: async () => {
+            const stored = mockStore.get('playlists')
+            return stored || []
+          },
+          savePlaylist: async (playlists) => {
+            mockStore.set('playlists', playlists)
+            return { success: true }
+          },
+          deletePlaylist: async (playlistId) => {
+            const playlists = mockStore.get('playlists') || []
+            const filtered = playlists.filter(p => p.id !== playlistId)
+            mockStore.set('playlists', filtered)
+            return { success: true }
+          },
+          fetchPlaylist: async (url) => {
+            try {
+              const response = await fetch(url, {
+                mode: 'cors',
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+                }
+              })
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+              }
+              const content = await response.text()
+              return { success: true, content, url }
+            } catch (error) {
+              return { error: `浏览器模式下无法获取远程播放列表: ${error.message}。请使用 npm run electron:dev 或手动复制内容。` }
+            }
+          },
+          openLocalFile: async () => {
+            return { error: '浏览器模式不支持本地文件选择，请使用 npm run electron:dev' }
+          },
+          readLocalFile: async () => {
+            return { error: '浏览器模式不支持读取本地文件，请使用 npm run electron:dev' }
+          },
+          toggleDevTools: async () => {
+            console.log('浏览器模式：开发者工具切换（无操作）')
+            return { success: true }
+          },
+          getLogs: async () => {
+            return '浏览器模式：日志功能在 npm run electron:dev 中可用'
+          },
+          clearLogs: async () => {
+            console.log('浏览器模式：清除日志（无操作）')
+            return true
+          }
+        }
+      }
+    }
+
     onMounted(async () => {
       try {
-        // 检查是否在Electron环境中
-        if (!window.electronAPI) {
-          console.warn('Not running in Electron environment, using mock data')
-          // 在浏览器环境中使用模拟数据
-          playlists.value = [
-            {
-              id: '1',
-              name: '示例播放列表',
-              url: 'https://example.com/playlist.m3u8',
-              channels: [
-                { id: '1', name: '示例频道1', url: 'https://example.com/channel1.m3u8' },
-                { id: '2', name: '示例频道2', url: 'https://example.com/channel2.m3u8' }
-              ],
-              type: 'remote',
-              addedAt: new Date().toISOString()
-            }
-          ]
-          filteredPlaylists.value = playlists.value
-          devToolsEnabled.value = false
-          showToast('浏览器模式：请使用 npm run electron:dev 启动完整功能', 'info')
-          return
+        // 设置模拟 API（如果需要）
+        setupMockElectronAPI()
+        
+        // 检查是否在真正的Electron环境中
+        const isElectronMode = window.electronAPI && window.process && window.process.versions && window.process.versions.electron
+        
+        if (!isElectronMode) {
+          console.warn('浏览器模式：功能受限，建议使用 npm run electron:dev')
+          showToast('浏览器模式：功能受限，建议使用 npm run electron:dev 获得完整功能', 'info')
         }
 
         const loadedPlaylists = await window.electronAPI.getPlaylists()
@@ -506,7 +571,14 @@ export default {
         // 解析 M3U/M3U8 内容
         const channels = parseM3UContent(content, url)
         if (channels.length === 0) {
-          throw new Error('未找到有效的频道信息')
+          console.error('播放列表解析失败，内容预览:', content.substring(0, 200))
+          throw new Error(`未找到有效的频道信息。请检查播放列表格式是否正确。
+支持的格式：
+1. 标准M3U: #EXTINF:-1,频道名 换行 http://url
+2. 简单格式: 频道名,http://url
+3. 带分组: 分组名,#genre#
+
+如果问题持续，请检查控制台日志获取详细信息。`)
         }
 
         // 生成唯一名称
@@ -1044,14 +1116,28 @@ export default {
 
     const parseM3UContent = (content, baseUrl) => {
       try {
+        console.log('开始解析播放列表内容，长度:', content.length)
+        console.log('内容预览:', content.substring(0, 500))
+        
         const lines = content.split('\n')
         const channels = []
         let currentChannel = null
+        let currentGroup = '未分类'
 
-        for (let line of lines) {
-          line = line.trim()
+        for (let i = 0; i < lines.length; i++) {
+          let line = lines[i].trim()
           if (!line) continue
           
+          console.log(`解析第${i+1}行:`, line)
+          
+          // 处理分组标记 (如: 央视频道,#genre#)
+          if (line.includes(',#genre#')) {
+            currentGroup = line.replace(',#genre#', '').trim()
+            console.log('找到分组:', currentGroup)
+            continue
+          }
+          
+          // 处理标准M3U格式 (#EXTINF:)
           if (line.startsWith('#EXTINF:')) {
             // 解析频道信息
             const titleMatch = line.match(/,(.+)$/)
@@ -1063,14 +1149,39 @@ export default {
               id: String(channels.length + 1),
               name: tvgNameMatch ? tvgNameMatch[1] : (titleMatch ? titleMatch[1].trim() : `Channel ${channels.length + 1}`),
               logo: tvgLogoMatch ? tvgLogoMatch[1] : '',
-              group: groupMatch ? groupMatch[1] : '未分类',
+              group: groupMatch ? groupMatch[1] : currentGroup,
               url: ''
             }
-          } else if (line && !line.startsWith('#') && currentChannel) {
+            console.log('创建标准M3U频道:', currentChannel.name)
+          } 
+          // 处理简单的逗号分隔格式 (如: CCTV2,http://...)
+          else if (line.includes(',http') && !line.startsWith('#')) {
+            const commaIndex = line.indexOf(',')
+            if (commaIndex > 0 && commaIndex < line.length - 1) {
+              const name = line.substring(0, commaIndex).trim()
+              const url = line.substring(commaIndex + 1).trim()
+              
+              if (name && url && (url.startsWith('http') || url.startsWith('rtmp') || url.startsWith('rtsp'))) {
+                const channel = {
+                  id: String(channels.length + 1),
+                  name: name,
+                  logo: '',
+                  group: currentGroup,
+                  url: url
+                }
+                channels.push(channel)
+                console.log('添加简单格式频道:', channel.name, channel.url)
+                continue
+              }
+            }
+          }
+          // 处理URL行 (标准M3U格式的URL)
+          else if (line && !line.startsWith('#') && currentChannel) {
             try {
               // 处理相对和绝对 URL
               currentChannel.url = line.startsWith('http') ? line : new URL(line, baseUrl).href
               channels.push({ ...currentChannel })
+              console.log('添加标准M3U频道:', currentChannel.name, currentChannel.url)
               currentChannel = null
             } catch (error) {
               console.error('解析频道 URL 失败:', error)
@@ -1078,6 +1189,29 @@ export default {
               currentChannel = null
             }
           }
+        }
+
+        console.log('解析完成，共找到', channels.length, '个频道')
+        
+        // 显示每个频道的详细信息
+        channels.forEach((channel, index) => {
+          console.log(`频道 ${index + 1}: ${channel.name} (${channel.group}) -> ${channel.url}`)
+        })
+        
+        // 如果没有找到频道，提供更详细的调试信息
+        if (channels.length === 0) {
+          console.warn('⚠️ 未找到任何有效频道，请检查播放列表格式')
+          console.log('支持的格式包括：')
+          console.log('1. 标准M3U格式: #EXTINF:-1,频道名称\\nhttp://url')
+          console.log('2. 简单格式: 频道名称,http://url')
+          console.log('3. 分组格式: 分组名称,#genre#')
+          
+          // 分析内容中的常见问题
+          const contentLines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0)
+          console.log('内容行数:', contentLines.length)
+          console.log('包含http的行数:', contentLines.filter(line => line.includes('http')).length)
+          console.log('包含#EXTINF的行数:', contentLines.filter(line => line.startsWith('#EXTINF')).length)
+          console.log('包含逗号的行数:', contentLines.filter(line => line.includes(',')).length)
         }
 
         // 对频道进行排序和分组
@@ -1267,7 +1401,14 @@ export default {
             // 解析新的频道列表
             const newChannels = parseM3UContent(result.content, changes.url.trim())
             if (newChannels.length === 0) {
-              throw new Error('未找到有效的频道信息')
+              console.error('播放列表解析失败，内容预览:', result.content.substring(0, 200))
+              throw new Error(`未找到有效的频道信息。请检查播放列表格式是否正确。
+支持的格式：
+1. 标准M3U: #EXTINF:-1,频道名 换行 http://url
+2. 简单格式: 频道名,http://url
+3. 带分组: 分组名,#genre#
+
+如果问题持续，请检查控制台日志获取详细信息。`)
             }
 
             // 更新播放列表
