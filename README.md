@@ -1,196 +1,276 @@
-# X-IPTV Player
+# 🎬 X-IPTV Player
 
-一个基于 Electron + Vue 3 的现代化 IPTV 播放器，支持 M3U/M3U8 播放列表，具有优雅的 Apple 风格界面设计。
+<div align="center">
 
-## ✨ 主要功能
+![X-IPTV Player](src/assets/iptv.png)
 
-- 🎥 **多格式支持**: 支持 M3U/M3U8 播放列表格式
-- 📺 **高质量播放**: 基于 HLS.js 和 mpegts.js 的专业视频播放
-- 🎨 **现代化界面**: Apple 风格的优雅用户界面
-- 📱 **响应式设计**: 适配不同屏幕尺寸
-- 🔍 **智能搜索**: 支持播放列表和频道搜索
-- 📋 **播放列表管理**: 添加、编辑、删除播放源
-- 🎯 **虚拟滚动**: 高性能频道列表展示
-- 🔧 **开发者工具**: 内置日志查看和调试功能
+一个现代化的跨平台 IPTV 播放器，采用 Apple 风格设计理念打造优雅的观看体验
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js](https://img.shields.io/badge/Node.js-v22.10.0+-green.svg)](https://nodejs.org/)
+[![Electron](https://img.shields.io/badge/Electron-v25+-blue.svg)](https://electronjs.org/)
+[![Vue](https://img.shields.io/badge/Vue-3.0+-brightgreen.svg)](https://vuejs.org/)
+
+[功能特色](#-功能特色) • [快速开始](#-快速开始) • [使用指南](#-使用指南) • [开发](#-开发) • [常见问题](#-常见问题)
+
+</div>
+
+---
+
+## ✨ 功能特色
+
+### 🎥 专业级播放体验
+- **多格式支持** - 完美支持 M3U/M3U8 播放列表格式
+- **高质量解码** - 基于 HLS.js 和 mpegts.js 的专业视频播放引擎
+- **智能适配** - 自动检测最佳播放模式，确保流畅播放
+
+### 🎨 现代化界面设计
+- **Apple 风格** - 精致的毛玻璃效果和流畅动画
+- **响应式布局** - 完美适配各种屏幕尺寸
+- **直观操作** - 卡片式播放列表管理，一目了然
+
+### 🚀 高性能优化
+- **虚拟滚动** - 轻松处理数千个频道的大型播放列表
+- **智能缓存** - 优化播放性能，减少缓冲等待
+- **内存管理** - 自动清理资源，保持应用流畅运行
+
+### 🔍 智能管理功能
+- **快速搜索** - 支持播放列表和频道的实时搜索
+- **重复检测** - 自动识别并清理重复的播放源
+- **数据持久化** - 安全保存您的播放列表配置
 
 ## 🚀 快速开始
 
-### 环境要求
+### 系统要求
 
-- Node.js v22.10.0 或更高版本
-- npm 或 yarn 包管理器
+- **Node.js** v22.10.0 或更高版本
+- **操作系统** macOS 10.14+ / Windows 10+ / Linux
 
-### 安装依赖
+### 一键安装
 
 ```bash
-# 使用指定的 Node.js 版本
-nvm use v22.10.0
+# 克隆项目
+git clone https://github.com/your-username/x-iptv-player.git
+cd x-iptv-player
 
-# 安装项目依赖
+# 安装依赖
 npm install
 
-# 安装开发依赖
-npm install electron --save-dev
-npm install cross-env --save-dev
-```
-
-### 开发模式
-
-```bash
-# 启动开发服务器
+# 启动开发版本
 npm run electron:dev
-
-# 或者指定端口启动
-npm run dev:port -- --port 3005
 ```
 
-
-
-
-### 生产构建
+### 快速打包
 
 ```bash
-# 构建 Web 应用
+# 构建应用
 npm run build
 
-# 打包 Electron 应用
+# 打包桌面应用
 npm run dist
 
 # 平台特定打包
-npm run electron:build:mac    # macOS
-npm run electron:build:win    # Windows
-npm run electron:build:linux  # Linux
+npm run electron:build:mac     # macOS DMG
+npm run electron:build:win     # Windows EXE  
+npm run electron:build:linux   # Linux AppImage
 ```
 
-### 清理构建
-
-```bash
-# 清理之前的构建
-rm -rf dist
-rm -rf release
-
-# 重新安装依赖
-npm install
-
-# 构建和打包
-npm run dist
-```
-
-## 📁 项目结构
-
-```
-x-iptv-player/
-├── src/                          # 源代码目录
-│   ├── App.vue                   # 主应用组件
-│   ├── main.js                   # Vue 应用入口
-│   ├── assets/                   # 静态资源
-│   │   ├── electron.icns         # macOS 应用图标
-│   │   ├── iptv.png             # 应用图标 PNG 格式
-│   │   └── iptv-1.png           # 备用图标
-│   └── components/               # Vue 组件
-│       ├── AddPlaylistDialog.vue # 添加播放列表对话框
-│       ├── EditPlaylistDialog.vue# 编辑播放列表对话框
-│       └── Toast.vue            # 消息提示组件
-├── scripts/                      # 构建脚本
-│   └── dev.js                   # 开发服务器启动脚本
-├── main.js                      # Electron 主进程
-├── preload.js                   # Electron 预加载脚本
-├── vite.config.js              # Vite 配置文件
-├── package.json                # 项目配置和依赖
-├── M3U8-Format-Guide.md        # M3U8 格式指南
-├── PORT_USAGE.md               # 端口使用说明
-└── README.md                   # 项目说明文档
-```
-
-## 🎯 使用说明
+## 📖 使用指南
 
 ### 添加播放源
 
-1. **在线播放列表**: 输入 M3U/M3U8 播放列表的 URL
-2. **本地文件**: 选择本地的 M3U/M3U8 文件
-3. **单个频道**: 直接输入单个 M3U8 流地址
+<table>
+<tr>
+<td width="50%">
+
+**在线播放列表**
+1. 点击 "+" 添加播放源
+2. 输入 M3U/M3U8 播放列表 URL
+3. 应用会自动解析并添加所有频道
+
+</td>
+<td width="50%">
+
+**本地文件**
+1. 选择 "本地文件" 选项
+2. 浏览并选择本地 M3U/M3U8 文件
+3. 文件内容会被导入到应用中
+
+</td>
+</tr>
+</table>
 
 ### 播放控制
 
-- 点击频道列表中的频道开始播放
-- 使用搜索框快速查找频道
-- 支持频道列表的显示/隐藏切换
-- 频道按序号顺序排列，便于查找
+- **开始播放** - 点击任意频道即可开始观看
+- **快速搜索** - 使用搜索栏快速定位频道
+- **列表管理** - 支持显示/隐藏频道列表
+- **频道导航** - 频道按序号排序，便于浏览
 
-### 播放列表管理
+### 高级功能
 
-- **编辑**: 修改播放列表名称和地址
-- **删除**: 移除不需要的播放列表
-- **重复检测**: 自动检测并清理重复的播放源
+| 功能 | 描述 | 快捷操作 |
+|------|------|----------|
+| 编辑播放源 | 修改播放列表名称和地址 | 悬停卡片 → 编辑按钮 |
+| 删除播放源 | 移除不需要的播放列表 | 悬停卡片 → 删除按钮 |
+| 开发者工具 | 查看应用运行日志 | 设置菜单 → 开发者工具 |
+| 清理重复 | 自动检测重复播放源 | 设置菜单 → 清理重复播放源 |
 
-## 🔧 开发者功能
+## 🛠 开发
 
-### 调试工具
+### 项目架构
 
-- **开发者工具**: 可通过设置菜单开启/关闭
-- **日志查看**: 实时查看应用运行日志
-- **详细日志**: 可选择显示详细的加载日志
+```
+x-iptv-player/
+├── 🎯 src/                    # 核心源码
+│   ├── App.vue               # 主应用组件
+│   ├── main.js               # Vue 入口文件  
+│   ├── components/           # Vue 组件库
+│   └── assets/              # 静态资源
+├── ⚡ scripts/               # 构建脚本
+├── 🔧 main.js               # Electron 主进程
+├── 🔒 preload.js            # 安全预加载脚本
+└── ⚙️ vite.config.js        # Vite 构建配置
+```
 
 ### 技术栈
 
-- **前端框架**: Vue 3 + Composition API
-- **构建工具**: Vite
-- **桌面框架**: Electron
-- **视频播放**: HLS.js + mpegts.js
-- **状态管理**: electron-store
-- **样式设计**: Apple 风格 CSS
+<div align="center">
 
-## ⚠️ 注意事项
+| 分类 | 技术 | 版本 | 说明 |
+|------|------|------|------|
+| **桌面框架** | Electron | v25+ | 跨平台桌面应用 |
+| **前端框架** | Vue 3 | v3.3+ | 组合式 API |
+| **构建工具** | Vite | v4+ | 快速热重载 |
+| **视频播放** | HLS.js | v1.5+ | HTTP Live Streaming |
+| | mpegts.js | v1.8+ | MPEG-TS 流支持 |
+| **状态管理** | electron-store | v8+ | 数据持久化 |
 
-### 图标文件
-- `.icns` 文件必须是有效的 macOS 图标格式
-- 图标文件需要包含多个尺寸（16x16, 32x32, 128x128, 256x256, 512x512 等）
-- 可以使用 IconSet Creator 或 Image2icon 等工具将 PNG 转换为 .icns
+</div>
 
-### 播放源兼容性
-- 支持标准的 M3U/M3U8 格式播放列表
-- 推荐使用 HTTPS 协议的播放源以确保安全性
-- 某些播放源可能需要特定的 User-Agent 或 Referer 头部
+### 开发命令
 
-### 网络和性能
-- 首次加载播放列表可能需要一些时间，请耐心等待
-- 建议在稳定的网络环境下使用
-- 大型播放列表（>1000个频道）会自动启用虚拟滚动优化性能
+```bash
+# 开发环境
+npm run electron:dev          # 启动开发服务器
+npm run dev                   # 仅启动 Web 版本
+npm run dev:port -- --port 3005  # 指定端口
 
-### 开发和调试
-- 开发模式下默认关闭开发者工具，可通过设置菜单开启
-- 生产环境构建前请确保清理 `dist` 和 `release` 目录
-- 如遇到播放问题，可开启详细日志查看具体错误信息
+# 构建部署  
+npm run build                 # 构建 Web 应用
+npm run dist                  # 打包桌面应用
+npm run pack                  # 仅打包不分发
+
+# 维护工具
+npm run postinstall          # 重建原生依赖
+```
+
+### 调试工具
+
+- **实时日志** - 内置日志面板，实时查看应用状态
+- **开发者工具** - 可通过设置菜单一键开启 DevTools
+- **详细模式** - 支持显示详细的网络和解码日志
+
+## 🔧 配置说明
+
+### 支持格式
+
+- **M3U** - 标准 M3U 播放列表格式
+- **M3U8** - HTTP Live Streaming 播放列表
+- **单流地址** - 直接的视频流 URL
+
+### 网络要求
+
+- **协议支持** - HTTP/HTTPS/RTMP/RTSP
+- **跨域处理** - 自动处理 CORS 问题
+- **代理支持** - 支持系统代理设置
+
+### 性能优化
+
+- **虚拟滚动** - 大列表（>1000 项）自动启用
+- **智能预加载** - 提前建立服务器连接
+- **内存清理** - 自动清理播放器实例
 
 ## 🐛 常见问题
 
-### 播放失败
-1. 检查播放源地址是否有效
-2. 确认网络连接正常
+<details>
+<summary><strong>🎥 播放相关问题</strong></summary>
+
+**Q: 视频无法播放？**
+A: 请检查：
+1. 播放源地址是否有效
+2. 网络连接是否正常  
 3. 查看日志面板获取详细错误信息
 
-### 应用无法启动
-1. 确认 Node.js 版本符合要求
-2. 重新安装依赖：`rm -rf node_modules && npm install`
-3. 检查端口是否被占用
+**Q: 播放卡顿？**  
+A: 建议：
+1. 确保网络环境稳定
+2. 关闭其他占用带宽的应用
+3. 尝试切换到其他播放源
 
-### 图标不显示
+</details>
+
+<details>
+<summary><strong>⚙️ 应用启动问题</strong></summary>
+
+**Q: 应用无法启动？**
+A: 请尝试：
+1. 确认 Node.js 版本 ≥ v22.10.0
+2. 清理并重新安装依赖：`rm -rf node_modules && npm install`
+3. 检查端口 3000-3010 是否被占用
+
+**Q: 图标不显示？**
+A: 解决方案：
 1. 确认 `src/assets/electron.icns` 文件存在
-2. 检查 `package.json` 中的图标路径配置
-3. 重新构建应用
+2. 检查 `package.json` 中图标路径配置
+3. 重新构建应用：`npm run dist`
 
-## 📄 许可证
+</details>
 
-本项目采用 MIT 许可证，详情请查看 LICENSE 文件。
+<details>
+<summary><strong>🔧 其他问题</strong></summary>
 
-## 🤝 贡献
+**Q: 如何导入大量播放源？**
+A: 支持批量导入：
+1. 准备标准格式的 M3U 文件
+2. 使用"本地文件"方式导入
+3. 应用会自动解析所有频道
 
-欢迎提交 Issue 和 Pull Request 来改进这个项目！
+**Q: 播放源重复怎么办？** 
+A: 自动检测：
+1. 打开设置菜单
+2. 点击"清理重复播放源"  
+3. 系统会自动清理重复项
 
-## 📞 支持
+</details>
 
-如果您在使用过程中遇到问题，请：
+## 📄 开源协议
 
-1. 查看本文档的常见问题部分
-2. 在 GitHub 上提交 Issue
-3. 查看项目的 Wiki 页面获取更多信息
+本项目基于 [MIT License](LICENSE) 开源协议，您可以自由使用、修改和分发。
+
+## 🤝 参与贡献
+
+我们欢迎所有形式的贡献！
+
+- 🐛 [报告 Bug](https://github.com/your-username/x-iptv-player/issues)
+- 💡 [提出新功能](https://github.com/your-username/x-iptv-player/issues)
+- 📖 改进文档
+- 🔀 提交 Pull Request
+
+## 🌟 支持项目
+
+如果这个项目对您有帮助，请考虑：
+
+- ⭐ 给项目点个 Star
+- 🔄 分享给其他开发者
+- 💝 [赞助开发](https://github.com/sponsors/your-username)
+
+---
+
+<div align="center">
+
+**Made with ❤️ by X-IPTV Player Team**
+
+[🏠 官网](https://your-website.com) • [📱 下载](https://github.com/your-username/x-iptv-player/releases) • [📧 反馈](mailto:your-email@example.com)
+
+</div>
